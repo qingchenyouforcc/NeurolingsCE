@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "cli.hpp"
+#include "shijima-qt/cli.hpp"
 #include <QString>
 #include <QVariant>
 #include <QMap>

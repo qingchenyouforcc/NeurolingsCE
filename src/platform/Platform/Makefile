@@ -1,4 +1,4 @@
-include ../common.mk
+include ../../common.mk
 
 all::
 	$(MAKE) -C $(BUILD_PLATFORM) || { rm -f Platform.a && false; }

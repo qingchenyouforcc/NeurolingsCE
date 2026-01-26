@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "SoundEffectManager.hpp"
+#include "shijima-qt/SoundEffectManager.hpp"
 
 #if SHIJIMA_USE_QTMULTIMEDIA
 

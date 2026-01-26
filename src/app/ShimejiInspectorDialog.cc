@@ -16,8 +16,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "ShimejiInspectorDialog.hpp"
-#include "ShijimaWidget.hpp"
+#include "shijima-qt/ShimejiInspectorDialog.hpp"
+#include "shijima-qt/ShijimaWidget.hpp"
 #include <QFormLayout>
 #include <string>
 #include <QLabel>

@@ -29,7 +29,7 @@ if(NOT DEFINED SHIJIMA_DEFAULT_MASCOT_FILES)
   endforeach()
 endif()
 
-file(WRITE "${out}" "#include \"DefaultMascot.hpp\"\n\n")
+file(WRITE "${out}" "#include \"shijima-qt/DefaultMascot.hpp\"\n\n")
 file(APPEND "${out}" "const std::map<std::string, std::pair<const char *, size_t>> defaultMascot = {\n")
 
 foreach(f IN LISTS SHIJIMA_DEFAULT_MASCOT_FILES)

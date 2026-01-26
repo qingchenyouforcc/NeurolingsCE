@@ -18,7 +18,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "Asset.hpp"
+#include "shijima-qt/Asset.hpp"
 #include <QImage>
 #include <QMap>
 

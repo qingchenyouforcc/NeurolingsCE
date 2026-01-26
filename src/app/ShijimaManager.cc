@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "ShijimaManager.hpp"
+#include "shijima-qt/ShijimaManager.hpp"
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -35,9 +35,9 @@
 #include <QDesktopServices>
 #include <QScreen>
 #include <QRandomGenerator>
-#include "PlatformWidget.hpp"
-#include "ShijimaLicensesDialog.hpp"
-#include "ShijimaWidget.hpp"
+#include "shijima-qt/PlatformWidget.hpp"
+#include "shijima-qt/ShijimaLicensesDialog.hpp"
+#include "shijima-qt/ShijimaWidget.hpp"
 #include <QDirIterator>
 #include <QDesktopServices>
 #include <shijima/mascot/factory.hpp>
@@ -45,7 +45,7 @@
 #include <shimejifinder/analyze.hpp>
 #endif
 #include <QStandardPaths>
-#include "ForcedProgressDialog.hpp"
+#include "shijima-qt/ForcedProgressDialog.hpp"
 #include <QAbstractItemModel>
 #include <QAction>
 #include <QCoreApplication>

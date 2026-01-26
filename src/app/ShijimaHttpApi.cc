@@ -16,9 +16,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "ShijimaHttpApi.hpp"
+#include "shijima-qt/ShijimaHttpApi.hpp"
 #include <httplib.h>
-#include "ShijimaManager.hpp"
+#include "shijima-qt/ShijimaManager.hpp"
 #include <thread>
 #include <iostream>
 #include <QJsonArray>

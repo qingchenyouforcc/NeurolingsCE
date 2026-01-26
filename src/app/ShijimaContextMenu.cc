@@ -16,9 +16,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "ShijimaContextMenu.hpp"
-#include "ShijimaWidget.hpp"
-#include "ShijimaManager.hpp"
+#include "shijima-qt/ShijimaContextMenu.hpp"
+#include "shijima-qt/ShijimaWidget.hpp"
+#include "shijima-qt/ShijimaManager.hpp"
 
 ShijimaContextMenu::ShijimaContextMenu(ShijimaWidget *parent)
     : QMenu("Context menu", parent)

@@ -1,4 +1,4 @@
-id ICON "shijima-qt.ico"
+id ICON "..\\packaging\\shijima-qt.ico"
 1 VERSIONINFO
 FILEVERSION     0,1,0,0
 PRODUCTVERSION  0,1,0,0

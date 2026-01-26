@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "ShijimaWidget.hpp"
+#include "shijima-qt/ShijimaWidget.hpp"
 #include <QWidget>
 #include <QPainter>
 #include <QFile>
@@ -30,10 +30,10 @@
 #include <QTextStream>
 #include <shijima/shijima.hpp>
 #include "Platform/Platform.hpp"
-#include "ShimejiInspectorDialog.hpp"
-#include "AssetLoader.hpp"
-#include "ShijimaContextMenu.hpp"
-#include "ShijimaManager.hpp"
+#include "shijima-qt/ShimejiInspectorDialog.hpp"
+#include "shijima-qt/AssetLoader.hpp"
+#include "shijima-qt/ShijimaContextMenu.hpp"
+#include "shijima-qt/ShijimaManager.hpp"
 #if SHIJIMA_WITH_SHIMEJIFINDER
 #include <shimejifinder/utils.hpp>
 #endif

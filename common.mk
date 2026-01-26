@@ -125,7 +125,7 @@ $(error could not find Qt plugin path)
 	endif
 	export OBJDUMP
 define exe_dlls
-$(shell ./find_dlls.sh "$(1)" "$(WINDLL_PATH)")
+$(shell ./src/tools/find_dlls.sh "$(1)" "$(WINDLL_PATH)")
 endef
 define copy_exe_dlls
 $(call copy_changed,$(call exe_dlls,"$(1)"),$(2))

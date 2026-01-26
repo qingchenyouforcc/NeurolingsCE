@@ -12,7 +12,7 @@ fi
 
 file_size="$(wc -c < "$1" | awk '{print $1}')"
 
-echo "#include \"DefaultMascot.hpp\""
+echo "#include \"shijima-qt/DefaultMascot.hpp\""
 echo
 
 echo "const std::map<std::string, std::pair<const char *, size_t>> defaultMascot = {"

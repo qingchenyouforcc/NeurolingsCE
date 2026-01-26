@@ -16,10 +16,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "AssetLoader.hpp"
-#include "Asset.hpp"
-#include "qdir.h"
-#include "DefaultMascot.hpp"
+#include "shijima-qt/AssetLoader.hpp"
+#include "shijima-qt/Asset.hpp"
+#include "shijima-qt/DefaultMascot.hpp"
+#include <QDir>
 #include <QDir>
 
 AssetLoader::AssetLoader() {}

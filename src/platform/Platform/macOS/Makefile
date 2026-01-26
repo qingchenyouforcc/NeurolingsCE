@@ -1,4 +1,4 @@
-include ../../common.mk
+include ../../../common.mk
 
 SOURCES = Platform.mm ActiveWindowObserver.cc PrivateActiveWindowObserver.mm
 QT_LIBS = Core Widgets

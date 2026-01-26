@@ -16,12 +16,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "MascotData.hpp"
-#include "AssetLoader.hpp"
-#include "qdiriterator.h"
+#include "shijima-qt/MascotData.hpp"
+#include "shijima-qt/AssetLoader.hpp"
+#include <QDirIterator>
 #include <QPainter>
 #include <QDir>
-#include "DefaultMascot.hpp"
+#include "shijima-qt/DefaultMascot.hpp"
 #include <stdexcept>
 #include <shijima/parser.hpp>
 

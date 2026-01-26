@@ -22,9 +22,9 @@
 #include <QMessageBox>
 #include <shijima/log.hpp>
 #include "Platform/Platform.hpp"
-#include "ShijimaManager.hpp"
-#include "AssetLoader.hpp"
-#include "cli.hpp"
+#include "shijima-qt/ShijimaManager.hpp"
+#include "shijima-qt/AssetLoader.hpp"
+#include "shijima-qt/cli.hpp"
 #include <httplib.h>
 
 int main(int argc, char **argv) {

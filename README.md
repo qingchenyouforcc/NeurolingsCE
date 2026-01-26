@@ -1,4 +1,8 @@
-# Shijima-Qt
+# NeurolingsCE
+
+NeurolingsCE Core Based on Shijima
+
+Special modifications have been made for neurolingsCE to better adapt to it.
 
 ![Shijima-Qt running on Fedora 41](.images/Shijima-Qt-Fedora.jpg)
 

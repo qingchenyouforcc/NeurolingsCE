@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 
 
-#include "Asset.hpp"
+#include "shijima-qt/Asset.hpp"
 
 QRect Asset::getRectForImage(QImage const& image) {
     int startX=0, endX=image.width(), startY=0, endY=image.height();

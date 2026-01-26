@@ -28,14 +28,14 @@
 #include <QListWidget>
 #include <QSettings>
 #include <QScreen>
-#include "PlatformWidget.hpp"
-#include "MascotData.hpp"
+#include "shijima-qt/PlatformWidget.hpp"
+#include "shijima-qt/MascotData.hpp"
 #include <set>
 #include <list>
 #include <mutex>
 #include "Platform/ActiveWindowObserver.hpp"
-#include "ShijimaWidget.hpp"
-#include "ShijimaHttpApi.hpp"
+#include "shijima-qt/ShijimaWidget.hpp"
+#include "shijima-qt/ShijimaHttpApi.hpp"
 #include <condition_variable>
 
 class QVBoxLayout;

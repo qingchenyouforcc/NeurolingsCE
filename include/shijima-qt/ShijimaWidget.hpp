@@ -21,12 +21,12 @@
 #include <QWidget>
 #include <memory>
 #include <QRegion>
-#include "Asset.hpp"
-#include "SoundEffectManager.hpp"
+#include "shijima-qt/Asset.hpp"
+#include "shijima-qt/SoundEffectManager.hpp"
 #include <shijima/mascot/manager.hpp>
 #include <shijima/mascot/environment.hpp>
-#include "PlatformWidget.hpp"
-#include "MascotData.hpp"
+#include "shijima-qt/PlatformWidget.hpp"
+#include "shijima-qt/MascotData.hpp"
 
 class QPushButton;
 class QPaintEvent;

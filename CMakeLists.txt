@@ -87,39 +87,39 @@ if(MSVC)
 endif()
 
 target_sources(shijima-qt PRIVATE
-  main.cc
-  Asset.cc
-  MascotData.cc
-  AssetLoader.cc
-  ForcedProgressDialog.cc
-  ShijimaContextMenu.cc
-  ShijimaManager.cc
-  ShijimaWidget.cc
-  SoundEffectManager.cc
-  ShijimaLicensesDialog.cc
-  ShimejiInspectorDialog.cc
-  ShijimaHttpApi.cc
-  cli.cc
+  src/app/main.cc
+  src/app/Asset.cc
+  src/app/MascotData.cc
+  src/app/AssetLoader.cc
+  src/app/ForcedProgressDialog.cc
+  src/app/ShijimaContextMenu.cc
+  src/app/ShijimaManager.cc
+  src/app/ShijimaWidget.cc
+  src/app/SoundEffectManager.cc
+  src/app/ShijimaLicensesDialog.cc
+  src/app/ShimejiInspectorDialog.cc
+  src/app/ShijimaHttpApi.cc
+  src/app/cli.cc
 
-  Platform/Platform.hpp
-  Platform/ActiveWindow.hpp
-  Platform/ActiveWindowObserver.hpp
+  src/platform/Platform/Platform.hpp
+  src/platform/Platform/ActiveWindow.hpp
+  src/platform/Platform/ActiveWindowObserver.hpp
 )
 
 if(SHIJIMA_WITH_DEFAULT_MASCOT)
   set(_default_mascot_files
-    "${CMAKE_CURRENT_SOURCE_DIR}/DefaultMascot/behaviors.xml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/DefaultMascot/actions.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/assets/DefaultMascot/behaviors.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/assets/DefaultMascot/actions.xml"
   )
   foreach(i RANGE 1 46)
-    list(APPEND _default_mascot_files "${CMAKE_CURRENT_SOURCE_DIR}/DefaultMascot/img/shime${i}.png")
+    list(APPEND _default_mascot_files "${CMAKE_CURRENT_SOURCE_DIR}/src/assets/DefaultMascot/img/shime${i}.png")
   endforeach()
 
   add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc"
     COMMAND ${CMAKE_COMMAND}
       -DOUT:FILEPATH=${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc
-      -DSHIJIMA_DEFAULT_MASCOT_DIR:PATH=${CMAKE_CURRENT_SOURCE_DIR}/DefaultMascot
+      -DSHIJIMA_DEFAULT_MASCOT_DIR:PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/assets/DefaultMascot
       -DSHIJIMA_DEFAULT_MASCOT_IMAGE_COUNT:STRING=46
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BundleDefaultMascot.cmake"
     DEPENDS
@@ -168,40 +168,42 @@ else()
 endif()
 
 # Ensure the generated header exists before compiling the file that includes it.
-set_source_files_properties(ShijimaLicensesDialog.cc PROPERTIES OBJECT_DEPENDS "${_shijima_licenses_header}")
+set_source_files_properties(src/app/ShijimaLicensesDialog.cc PROPERTIES OBJECT_DEPENDS "${_shijima_licenses_header}")
 
 if(WIN32)
   target_sources(shijima-qt PRIVATE
-    resources.rc
-    Platform/Windows/Platform.cc
-    Platform/Windows/ActiveWindowObserver.cc
-    Platform/Windows/PrivateActiveWindowObserver.cc
-    Platform/Windows/PrivateActiveWindowObserver.hpp
+    src/resources/resources.rc
+    src/platform/Platform/Windows/Platform.cc
+    src/platform/Platform/Windows/ActiveWindowObserver.cc
+    src/platform/Platform/Windows/PrivateActiveWindowObserver.cc
+    src/platform/Platform/Windows/PrivateActiveWindowObserver.hpp
   )
 elseif(APPLE)
   target_sources(shijima-qt PRIVATE
-    Platform/macOS/Platform.mm
-    Platform/macOS/ActiveWindowObserver.cc
-    Platform/macOS/PrivateActiveWindowObserver.mm
-    Platform/macOS/PrivateActiveWindowObserver.hpp
+    src/platform/Platform/macOS/Platform.mm
+    src/platform/Platform/macOS/ActiveWindowObserver.cc
+    src/platform/Platform/macOS/PrivateActiveWindowObserver.mm
+    src/platform/Platform/macOS/PrivateActiveWindowObserver.hpp
   )
 elseif(UNIX)
   target_sources(shijima-qt PRIVATE
-    Platform/Linux/Platform.cc
-    Platform/Linux/ActiveWindowObserver.cc
-    Platform/Linux/PrivateActiveWindowObserver.cc
-    Platform/Linux/PrivateActiveWindowObserver.hpp
-    Platform/Linux/KWin.cc
-    Platform/Linux/KDEWindowObserverBackend.cc
-    Platform/Linux/GNOME.cc
-    Platform/Linux/GNOMEWindowObserverBackend.cc
-    Platform/Linux/DBus.cc
-    Platform/Linux/ExtensionFile.cc
+    src/platform/Platform/Linux/Platform.cc
+    src/platform/Platform/Linux/ActiveWindowObserver.cc
+    src/platform/Platform/Linux/PrivateActiveWindowObserver.cc
+    src/platform/Platform/Linux/PrivateActiveWindowObserver.hpp
+    src/platform/Platform/Linux/KWin.cc
+    src/platform/Platform/Linux/KDEWindowObserverBackend.cc
+    src/platform/Platform/Linux/GNOME.cc
+    src/platform/Platform/Linux/GNOMEWindowObserverBackend.cc
+    src/platform/Platform/Linux/DBus.cc
+    src/platform/Platform/Linux/ExtensionFile.cc
   )
 endif()
 
 target_include_directories(shijima-qt PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
   ${CMAKE_CURRENT_SOURCE_DIR}/libshijima
   ${CMAKE_CURRENT_SOURCE_DIR}/libshimejifinder
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp-httplib
