@@ -6,6 +6,7 @@
 !/.gitmodules
 !/*.cc
 !/*.hpp
+!/CMakeLists.txt
 !/.gitattributes
 !/Shijima-Qt.app/
 !/Shijima-Qt.app/Contents/
@@ -48,6 +49,8 @@
 !/com.pixelomer.ShijimaQt.desktop
 !/com.pixelomer.ShijimaQt.metainfo.xml
 !/resources.rc
+!/cmake/
+!/cmake/*.cmake
 !/libshimejifinder
 !/libshijima
 !/README.md

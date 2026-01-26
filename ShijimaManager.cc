@@ -41,7 +41,9 @@
 #include <QDirIterator>
 #include <QDesktopServices>
 #include <shijima/mascot/factory.hpp>
+#if SHIJIMA_WITH_SHIMEJIFINDER
 #include <shimejifinder/analyze.hpp>
+#endif
 #include <QStandardPaths>
 #include "ForcedProgressDialog.hpp"
 #include <QAbstractItemModel>
@@ -510,9 +512,15 @@ void ShijimaManager::reloadMascots(std::set<std::string> const& mascots) {
 
 std::set<std::string> ShijimaManager::import(QString const& path) noexcept {
     try {
+#if !SHIJIMA_WITH_SHIMEJIFINDER
+        (void)path;
+        std::cerr << "import disabled: SHIJIMA_WITH_SHIMEJIFINDER=0" << std::endl;
+        return {};
+#else
         auto ar = shimejifinder::analyze(path.toStdString());
         ar->extract(m_mascotsPath.toStdString());
         return ar->shimejis();
+#endif
     }
     catch (std::exception &ex) {
         std::cerr << "import failed: " << ex.what() << std::endl;

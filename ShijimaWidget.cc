@@ -34,7 +34,11 @@
 #include "AssetLoader.hpp"
 #include "ShijimaContextMenu.hpp"
 #include "ShijimaManager.hpp"
+#if SHIJIMA_WITH_SHIMEJIFINDER
 #include <shimejifinder/utils.hpp>
+#endif
+#include <algorithm>
+#include <cctype>
 
 using namespace shijima;
 
@@ -95,7 +99,14 @@ bool ShijimaWidget::inspectorVisible() {
 
 Asset const& ShijimaWidget::getActiveAsset() {
     auto &name = m_mascot->state->active_frame.get_name(m_mascot->state->looking_right);
-    auto lowerName = shimejifinder::to_lower(name);
+    std::string lowerName = name;
+#if SHIJIMA_WITH_SHIMEJIFINDER
+    lowerName = shimejifinder::to_lower(lowerName);
+#else
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+        return (char)std::tolower(c);
+    });
+#endif
     auto imagePath = QDir::cleanPath(m_data->imgRoot()
         + QDir::separator() + QString::fromStdString(lowerName));
     return AssetLoader::defaultLoader()->loadAsset(imagePath);
