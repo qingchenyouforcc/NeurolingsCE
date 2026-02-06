@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.21)
 
 project(ShijimaQt LANGUAGES CXX)
 
+if(MSVC)
+  # This project expects a 64-bit Qt when using Qt's msvc2022_64 kit.
+  # If you configure with Ninja from a Win32 (x86) environment, Qt6Config will be rejected.
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR "Detected 32-bit MSVC toolchain. Please configure/build with the x64 toolchain (Platform=x64 in Visual Studio) to match your Qt kit (e.g. msvc2022_64).")
+  endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -9,11 +17,26 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-set(CMAKE_PREFIX_PATH "D:/Qt/6.8.3/msvc2022_64")
+if(NOT DEFINED CMAKE_PREFIX_PATH AND DEFINED ENV{QTDIR})
+  # Allow Qt to be provided via environment (common with Qt installs / dev shells).
+  set(CMAKE_PREFIX_PATH "$ENV{QTDIR}" CACHE PATH "Qt install prefix" FORCE)
+endif()
 
 option(SHIJIMA_USE_QTMULTIMEDIA "Enable Qt Multimedia support" ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent)
+# libshijima ships an SDL2-based sandbox example. This repo primarily builds the Qt app,
+# so keep the SDL2 example off by default to avoid requiring SDL2 at configure time.
+option(SHIJIMA_BUILD_EXAMPLES "Build libshijima SDL2 sandbox example" OFF)
+
+find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Concurrent)
+if(NOT Qt6_FOUND)
+  message(FATAL_ERROR
+    "Qt6 not found. Set one of the following and reconfigure:\n"
+    "  - Qt6_DIR=D:/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6\n"
+    "  - CMAKE_PREFIX_PATH=D:/Qt/6.8.3/msvc2022_64\n"
+    "  - or set environment variable QTDIR to your Qt prefix (e.g. D:/Qt/6.8.3/msvc2022_64)\n"
+  )
+endif()
 message(STATUS "Using Qt6 from: ${Qt6_DIR}")
 message(STATUS "Qt6 version: ${Qt6_VERSION}")
 
@@ -224,6 +247,45 @@ target_link_libraries(shijima-qt PRIVATE
   shijima
 )
 
+if(MSVC)
+  # Make running from Visual Studio work without manually editing PATH.
+  # This points PATH at the Qt bin directory (where Qt6Guid.dll lives in Debug).
+  set_property(TARGET shijima-qt PROPERTY VS_DEBUGGER_ENVIRONMENT
+    "PATH=$<TARGET_FILE_DIR:Qt6::Core>\;%PATH%")
+endif()
+
+# Also deploy Qt runtime next to the built executable so it can be run directly
+# from the build output folder (and from VS) without requiring PATH tweaks.
+if(WIN32)
+  get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION_$<UPPER_CASE:$<CONFIG>>)
+  if(NOT _qt_core_location)
+    get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION_RELEASE)
+  endif()
+  if(NOT _qt_core_location)
+    get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION)
+  endif()
+
+  if(_qt_core_location)
+    get_filename_component(_qt_bin_dir "${_qt_core_location}" DIRECTORY)
+    find_program(QT_WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${_qt_bin_dir}")
+  else()
+    find_program(QT_WINDEPLOYQT_EXECUTABLE windeployqt)
+  endif()
+
+  if(QT_WINDEPLOYQT_EXECUTABLE)
+    add_custom_command(TARGET shijima-qt POST_BUILD
+      COMMAND "${QT_WINDEPLOYQT_EXECUTABLE}"
+              --no-translations
+              --no-system-d3d-compiler
+              "$<TARGET_FILE:shijima-qt>"
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:shijima-qt>"
+      VERBATIM
+    )
+  else()
+    message(WARNING "windeployqt not found; shijima-qt.exe may fail to start outside of a Qt environment (missing Qt6Guid.dll).")
+  endif()
+endif()
+
 if(SHIJIMA_WITH_SHIMEJIFINDER)
   if(SHIJIMA_WITH_LIBSHIMEJIFINDER)
     target_link_libraries(shijima-qt PRIVATE shimejifinder)
@@ -245,4 +307,37 @@ endif()
 if(WIN32)
   target_compile_definitions(shijima-qt PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
   set_target_properties(shijima-qt PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
+# Deploy Qt runtime DLLs next to the executable on Windows.
+# This fixes runtime errors like missing Qt6Guid.dll when running shijima-qt.exe
+# outside of Visual Studio (e.g., from the build/install folder).
+if(WIN32)
+  get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION_RELEASE)
+  if(NOT _qt_core_location)
+    get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION)
+  endif()
+
+  if(_qt_core_location)
+    get_filename_component(_qt_bin_dir "${_qt_core_location}" DIRECTORY)
+    find_program(QT_WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${_qt_bin_dir}")
+  else()
+    find_program(QT_WINDEPLOYQT_EXECUTABLE windeployqt)
+  endif()
+
+  if(QT_WINDEPLOYQT_EXECUTABLE)
+    install(TARGETS shijima-qt RUNTIME DESTINATION .)
+    install(CODE [[
+      execute_process(
+        COMMAND "${QT_WINDEPLOYQT_EXECUTABLE}"
+                --no-translations
+                --no-system-d3d-compiler
+                "$<TARGET_FILE:shijima-qt>"
+        WORKING_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+    ]])
+  else()
+    message(WARNING "windeployqt not found; Qt runtime DLLs will not be deployed during install. Install Qt and ensure windeployqt is on PATH.")
+  endif()
 endif()
