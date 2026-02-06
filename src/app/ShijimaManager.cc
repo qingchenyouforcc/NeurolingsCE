@@ -64,6 +64,9 @@
 #include <QColorDialog>
 #include <cstring>
 #include <cstdint>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QStyle>
 
 #define SHIJIMAQT_SUBTICK_COUNT 4
 
@@ -93,6 +96,114 @@ static void dispatchToMainThread(std::function<void()> callback) {
 
 static ShijimaManager *m_defaultManager = nullptr;
 
+static QIcon makeTrayIconFallback(QWidget *w) {
+    // Prefer the same icon used by src/resources/resources.rc when running from the source tree.
+    {
+        QIcon ico { QCoreApplication::applicationDirPath() + "/../src/packaging/shijima-qt.ico" };
+        if (!ico.isNull()) {
+            return ico;
+        }
+    }
+
+    if (qApp != nullptr) {
+        QIcon appIco = qApp->windowIcon();
+        if (!appIco.isNull()) {
+            return appIco;
+        }
+    }
+
+    if (w != nullptr) {
+        QIcon winIco = w->windowIcon();
+        if (!winIco.isNull()) {
+            return winIco;
+        }
+    }
+
+    QIcon themed = QIcon::fromTheme("shijima-qt");
+    if (!themed.isNull()) {
+        return themed;
+    }
+    if (qApp != nullptr && qApp->style() != nullptr) {
+        return qApp->style()->standardIcon(QStyle::SP_ComputerIcon);
+    }
+    return {};
+}
+
+static QSystemTrayIcon *g_trayIcon = nullptr;
+static QMenu *g_trayMenu = nullptr;
+
+static void rebuildTrayMenuFor(ShijimaManager *self) {
+    if (g_trayMenu == nullptr || self == nullptr) {
+        return;
+    }
+
+    g_trayMenu->clear();
+
+    QAction *toggleAction = g_trayMenu->addAction(self->isVisible() ? "Hide" : "Show");
+    QObject::connect(toggleAction, &QAction::triggered, [self]() {
+        self->setManagerVisible(!self->isVisible());
+        rebuildTrayMenuFor(self);
+    });
+
+    QMenu *spawnMenu = g_trayMenu->addMenu("Spawn");
+    auto names = self->loadedMascots().keys();
+    names.sort(Qt::CaseInsensitive);
+    for (auto const& name : names) {
+        QAction *a = spawnMenu->addAction(name);
+        QObject::connect(a, &QAction::triggered, [self, name]() {
+            self->spawn(name.toStdString());
+        });
+    }
+    if (names.isEmpty()) {
+        QAction *empty = spawnMenu->addAction("(none)");
+        empty->setEnabled(false);
+    }
+
+    g_trayMenu->addSeparator();
+
+    QAction *killAllAction = g_trayMenu->addAction("Kill all");
+    QObject::connect(killAllAction, &QAction::triggered, [self]() {
+        self->killAll();
+    });
+
+    QAction *quitAction = g_trayMenu->addAction("Quit");
+    QObject::connect(quitAction, &QAction::triggered, [self]() {
+        QMetaObject::invokeMethod(self, [self]() {
+            self->quitAction();
+        }, Qt::QueuedConnection);
+    });
+}
+
+static void setupTrayIconFor(ShijimaManager *self) {
+    if (self == nullptr) {
+        return;
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        return;
+    }
+    if (g_trayIcon != nullptr) {
+        return;
+    }
+
+    g_trayIcon = new QSystemTrayIcon(self);
+    g_trayIcon->setToolTip("Shijima-Qt");
+    g_trayIcon->setIcon(makeTrayIconFallback(self));
+
+    g_trayMenu = new QMenu(self);
+    g_trayIcon->setContextMenu(g_trayMenu);
+    rebuildTrayMenuFor(self);
+
+    QObject::connect(g_trayIcon, &QSystemTrayIcon::activated,
+        [self](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
+                self->setManagerVisible(!self->isVisible());
+                rebuildTrayMenuFor(self);
+            }
+        });
+
+    g_trayIcon->show();
+}
+
 ShijimaManager *ShijimaManager::defaultManager() {
     if (m_defaultManager == nullptr) {
         m_defaultManager = new ShijimaManager;
@@ -106,6 +217,8 @@ void ShijimaManager::finalize() {
         m_defaultManager = nullptr;
     }
 }
+
+// tray icon helpers are file-local (see above)
 
 void ShijimaManager::killAll() {
     for (auto mascot : m_mascots) {
@@ -214,6 +327,8 @@ void ShijimaManager::reloadMascot(QString const& name) {
         loadData(data);
     }
     m_listItemsToRefresh.insert(name);
+
+    rebuildTrayMenuFor(this);
 }
 
 void ShijimaManager::importAction() {
@@ -758,6 +873,8 @@ ShijimaManager::ShijimaManager(QWidget *parent):
     m_listWidget.setSelectionMode(QListWidget::ExtendedSelection);
     setCentralWidget(&m_listWidget);
     buildToolbar();
+
+    setupTrayIconFor(this);
 
     m_httpApi.start("127.0.0.1", 32456);
 }

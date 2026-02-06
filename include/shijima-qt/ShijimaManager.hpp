@@ -56,6 +56,7 @@ public:
     void killAllButOne(QString const& name);
     void setManagerVisible(bool visible);
     void importOnShow(QString const& path);
+    void quitAction();
     QMap<QString, MascotData *> const& loadedMascots();
     QMap<int, MascotData *> const& loadedMascotsById();
     std::list<ShijimaWidget *> const& mascots();
@@ -92,7 +93,6 @@ private:
     void setWindowedMode(bool windowedMode);
     void screenAdded(QScreen *);
     void screenRemoved(QScreen *);
-    void quitAction();
     std::set<std::string> import(QString const& path) noexcept;
     void importWithDialog(QList<QString> const& paths);
     void tick();
