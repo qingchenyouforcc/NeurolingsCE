@@ -123,6 +123,7 @@ target_sources(shijima-qt PRIVATE
   src/app/ShimejiInspectorDialog.cc
   src/app/ShijimaHttpApi.cc
   src/app/cli.cc
+  src/resources/resources.qrc
 
   src/platform/Platform/Platform.hpp
   src/platform/Platform/ActiveWindow.hpp

@@ -14,6 +14,7 @@ PKG_CONFIG ?= pkg-config
 WINDRES ?= $(patsubst %-windres,%-gcc,$(CC))
 AR ?= ar
 CMAKE ?= cmake
+RCC ?= rcc
 
 PLATFORM :=
 PLATFORM_CFLAGS :=

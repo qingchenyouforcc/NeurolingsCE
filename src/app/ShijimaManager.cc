@@ -97,9 +97,17 @@ static void dispatchToMainThread(std::function<void()> callback) {
 static ShijimaManager *m_defaultManager = nullptr;
 
 static QIcon makeTrayIconFallback(QWidget *w) {
-    // Prefer the same icon used by src/resources/resources.rc when running from the source tree.
+    // Prefer the icon embedded via Qt resource system (resources.qrc).
     {
-        QIcon ico { QCoreApplication::applicationDirPath() + "/../src/packaging/shijima-qt.ico" };
+        QIcon ico { QStringLiteral(":/shijima-qt.ico") };
+        if (!ico.isNull()) {
+            return ico;
+        }
+    }
+
+    // Fallback: try the PNG resource.
+    {
+        QIcon ico { QStringLiteral(":/shijima-qt.png") };
         if (!ico.isNull()) {
             return ico;
         }

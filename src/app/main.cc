@@ -17,6 +17,7 @@
 // 
 
 #include <QApplication>
+#include <QIcon>
 #include <QDir>
 #include <QStandardPaths>
 #include <QMessageBox>
@@ -38,6 +39,15 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("Shijima-Qt");
     app.setApplicationDisplayName("Shijima-Qt");
+    {
+        QIcon appIcon { QStringLiteral(":/shijima-qt.ico") };
+        if (appIcon.isNull()) {
+            appIcon = QIcon { QStringLiteral(":/shijima-qt.png") };
+        }
+        if (!appIcon.isNull()) {
+            app.setWindowIcon(appIcon);
+        }
+    }
     try {
         httplib::Client pingClient { "http://127.0.0.1:32456" };
         pingClient.set_connection_timeout(0, 500000);

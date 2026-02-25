@@ -18,7 +18,8 @@ SOURCES = src/app/main.cc \
 	DefaultMascot.cc \
 	src/app/ShijimaHttpApi.cc \
 	src/app/cli.cc \
-	src/resources/resources.rc
+	src/resources/resources.rc \
+	qrc_resources.cc
 
 DEFAULT_MASCOT_FILES := $(addsuffix .png,$(addprefix src/assets/DefaultMascot/img/shime,$(shell seq -s ' ' 1 1 46))) \
 	src/assets/DefaultMascot/behaviors.xml src/assets/DefaultMascot/actions.xml
@@ -167,6 +168,9 @@ licenses_generated.hpp: $(LICENSE_FILES) Makefile
 	done
 	echo ')";' >> licenses_generated.hpp
 
+qrc_resources.cc: src/resources/resources.qrc src/packaging/shijima-qt.ico src/packaging/com.pixelomer.ShijimaQt.png
+	$(RCC) -o $@ $<
+
 libshijima/build/Makefile: libshijima/CMakeLists.txt FORCE
 	mkdir -p libshijima/build && cd libshijima/build && $(CMAKE) $(CMAKEFLAGS) -DSHIJIMA_BUILD_EXAMPLES=NO ..
 
@@ -181,7 +185,7 @@ libshimejifinder/build/libshimejifinder.a: libshimejifinder/build/Makefile
 
 clean::
 	rm -rf publish/$(PLATFORM)/$(CONFIG) libshijima/build libshimejifinder/build
-	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) Shijima-Qt.AppImage
+	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) Shijima-Qt.AppImage qrc_resources.cc
 	$(MAKE) -C src/platform/Platform clean
 
 install:
