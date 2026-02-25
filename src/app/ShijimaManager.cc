@@ -981,8 +981,8 @@ void ShijimaManager::updateEnvironment(QScreen *screen) {
         geometry = screen->geometry();
         available = screen->availableGeometry();
     }
-    int taskbarHeight = available.bottom() - geometry.bottom();
-    int statusBarHeight = geometry.top() - available.top();
+    int taskbarHeight = geometry.bottom() - available.bottom();
+    int statusBarHeight = available.top() - geometry.top();
     if (taskbarHeight < 0) {
         taskbarHeight = 0;
     }
