@@ -35,7 +35,7 @@ ShijimaContextMenu::ShijimaContextMenu(ShijimaWidget *parent)
                 behaviors.push_back(behavior->name);
             }
         }
-        auto behaviorsMenu = addMenu("Behaviors");
+        auto behaviorsMenu = addMenu(tr("Behaviors"));
         for (std::string &behavior : behaviors) {
             action = behaviorsMenu->addAction(QString::fromStdString(behavior));
             connect(action, &QAction::triggered, [this, behavior](){
@@ -45,19 +45,19 @@ ShijimaContextMenu::ShijimaContextMenu(ShijimaWidget *parent)
     }
 
     // Show manager
-    action = addAction("Show manager");
+    action = addAction(tr("Show manager"));
     connect(action, &QAction::triggered, [](){
         ShijimaManager::defaultManager()->setManagerVisible(true);
     });
 
     // Inspect
-    action = addAction("Inspect");
+    action = addAction(tr("Inspect"));
     connect(action, &QAction::triggered, [this](){
         shijimaParent()->showInspector();
     });
 
     // Pause checkbox
-    action = addAction("Pause");
+    action = addAction(tr("Pause"));
     action->setCheckable(true);
     action->setChecked(parent->m_paused);
     connect(action, &QAction::triggered, [this](bool checked){
@@ -65,26 +65,26 @@ ShijimaContextMenu::ShijimaContextMenu(ShijimaWidget *parent)
     });
 
     // Call another
-    action = addAction("Call another");
+    action = addAction(tr("Call another"));
     connect(action, &QAction::triggered, [this](){
         ShijimaManager::defaultManager()->spawn(this->shijimaParent()->mascotName()
             .toStdString());
     });
 
     // Dismiss all but one
-    action = addAction("Dismiss all but one");
+    action = addAction(tr("Dismiss all but one"));
     connect(action, &QAction::triggered, [this](){
         ShijimaManager::defaultManager()->killAllButOne(this->shijimaParent());
     });
 
     // Dismiss all
-    action = addAction("Dismiss all");
+    action = addAction(tr("Dismiss all"));
     connect(action, &QAction::triggered, [](){
         ShijimaManager::defaultManager()->killAll();
     });
 
     // Dismiss
-    action = addAction("Dismiss");
+    action = addAction(tr("Dismiss"));
     connect(action, &QAction::triggered, parent, &ShijimaWidget::closeAction);
 }
 

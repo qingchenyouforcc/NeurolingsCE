@@ -75,33 +75,33 @@ ShimejiInspectorDialog::ShimejiInspectorDialog(ShijimaWidget *parent):
     m_formLayout->setFormAlignment(Qt::AlignLeft);
     m_formLayout->setLabelAlignment(Qt::AlignRight);
 
-    addRow("Window", [this](shijima::mascot::manager &mascot){
+    addRow(tr("Window"), [this](shijima::mascot::manager &mascot){
         return vecToString(shijimaParent()->pos());
     });
-    addRow("Anchor", [](shijima::mascot::manager &mascot){
+    addRow(tr("Anchor"), [](shijima::mascot::manager &mascot){
         return vecToString(mascot.state->anchor);
     });
-    addRow("Cursor", [](shijima::mascot::manager &mascot){
+    addRow(tr("Cursor"), [](shijima::mascot::manager &mascot){
         return vecToString(mascot.state->get_cursor());
     });
-    addRow("Behavior", [](shijima::mascot::manager &mascot){
+    addRow(tr("Behavior"), [](shijima::mascot::manager &mascot){
         return mascot.active_behavior()->name;
     });
-    addRow("Image", [](shijima::mascot::manager &mascot){
+    addRow(tr("Image"), [](shijima::mascot::manager &mascot){
         return mascot.state->active_frame.get_name(mascot.state->looking_right);
     });
-    addRow("Screen", [](shijima::mascot::manager &mascot){
+    addRow(tr("Screen"), [](shijima::mascot::manager &mascot){
         return areaToString(mascot.state->env->screen);
     });
-    addRow("Work Area", [](shijima::mascot::manager &mascot){
+    addRow(tr("Work Area"), [](shijima::mascot::manager &mascot){
         return areaToString(mascot.state->env->work_area);
     });
-    addRow("Active IE", [](shijima::mascot::manager &mascot){
+    addRow(tr("Active IE"), [](shijima::mascot::manager &mascot){
         if (mascot.state->env->active_ie.visible()) {
             return areaToString(mascot.state->env->active_ie);
         }
         else {
-            return std::string { "not visible" };
+            return std::string { tr("not visible").toStdString() };
         }
     });
 }

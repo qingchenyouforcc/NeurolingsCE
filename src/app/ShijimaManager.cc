@@ -48,6 +48,7 @@
 #include "shijima-qt/ForcedProgressDialog.hpp"
 #include <QAbstractItemModel>
 #include <QAction>
+#include <QActionGroup>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDesktopServices>
@@ -147,13 +148,13 @@ static void rebuildTrayMenuFor(ShijimaManager *self) {
 
     g_trayMenu->clear();
 
-    QAction *toggleAction = g_trayMenu->addAction(self->isVisible() ? "Hide" : "Show");
+    QAction *toggleAction = g_trayMenu->addAction(self->isVisible() ? QCoreApplication::translate("ShijimaManager", "Hide") : QCoreApplication::translate("ShijimaManager", "Show"));
     QObject::connect(toggleAction, &QAction::triggered, [self]() {
         self->setManagerVisible(!self->isVisible());
         rebuildTrayMenuFor(self);
     });
 
-    QMenu *spawnMenu = g_trayMenu->addMenu("Spawn");
+    QMenu *spawnMenu = g_trayMenu->addMenu(QCoreApplication::translate("ShijimaManager", "Spawn"));
     auto names = self->loadedMascots().keys();
     names.sort(Qt::CaseInsensitive);
     for (auto const& name : names) {
@@ -163,18 +164,18 @@ static void rebuildTrayMenuFor(ShijimaManager *self) {
         });
     }
     if (names.isEmpty()) {
-        QAction *empty = spawnMenu->addAction("(none)");
+        QAction *empty = spawnMenu->addAction(QCoreApplication::translate("ShijimaManager", "(none)"));
         empty->setEnabled(false);
     }
 
     g_trayMenu->addSeparator();
 
-    QAction *killAllAction = g_trayMenu->addAction("Kill all");
+    QAction *killAllAction = g_trayMenu->addAction(QCoreApplication::translate("ShijimaManager", "Kill all"));
     QObject::connect(killAllAction, &QAction::triggered, [self]() {
         self->killAll();
     });
 
-    QAction *quitAction = g_trayMenu->addAction("Quit");
+    QAction *quitAction = g_trayMenu->addAction(QCoreApplication::translate("ShijimaManager", "Quit"));
     QObject::connect(quitAction, &QAction::triggered, [self]() {
         QMetaObject::invokeMethod(self, [self]() {
             self->quitAction();
@@ -194,7 +195,7 @@ static void setupTrayIconFor(ShijimaManager *self) {
     }
 
     g_trayIcon = new QSystemTrayIcon(self);
-    g_trayIcon->setToolTip("Shijima-Qt");
+    g_trayIcon->setToolTip(QCoreApplication::translate("ShijimaManager", "Shijima-Qt"));
     g_trayIcon->setIcon(makeTrayIconFallback(self));
 
     g_trayMenu = new QMenu(self);
@@ -340,7 +341,7 @@ void ShijimaManager::reloadMascot(QString const& name) {
 }
 
 void ShijimaManager::importAction() {
-    auto paths = QFileDialog::getOpenFileNames(this, "Choose shimeji archive...");
+    auto paths = QFileDialog::getOpenFileNames(this, tr("Choose shimeji archive..."));
     if (paths.isEmpty()) {
         return;
     }
@@ -366,15 +367,15 @@ void ShijimaManager::deleteAction() {
     if (selected.size() == 0) {
         return;
     }
-    QString msg = "Are you sure you want to delete these shimeji?";
+    QString msg = tr("Are you sure you want to delete these shimeji?");
     for (long i=0; i<selected.size() && i<5; ++i) {
         msg += "\n* " + selected[i]->text();
     }
     if (selected.size() > 5) {
-        msg += "\n... and " + QString::number(selected.size() - 5) + " other(s)";
+        msg += tr("\n... and %1 other(s)").arg(selected.size() - 5);
     }
     QMessageBox msgBox { this };
-    msgBox.setWindowTitle("Delete shimeji");
+    msgBox.setWindowTitle(tr("Delete shimeji"));
     msgBox.setText(msg);
     msgBox.setStandardButtons(QMessageBox::StandardButton::Yes |
         QMessageBox::StandardButton::No);
@@ -422,34 +423,34 @@ void ShijimaManager::buildToolbar() {
     QMenu *menu;
     QMenu *submenu;
     
-    menu = menuBar()->addMenu("File");
+    menu = menuBar()->addMenu(tr("File"));
     {
-        action = menu->addAction("Import shimeji...");
+        action = menu->addAction(tr("Import shimeji..."));
         connect(action, &QAction::triggered, this, &ShijimaManager::importAction);
 
-        action = menu->addAction("Show shimeji folder");
+        action = menu->addAction(tr("Show shimeji folder"));
         connect(action, &QAction::triggered, [this](){
             QDesktopServices::openUrl(QUrl::fromLocalFile(m_mascotsPath));
         });
 
-        action = menu->addAction("Quit");
+        action = menu->addAction(tr("Quit"));
         connect(action, &QAction::triggered, this, &ShijimaManager::quitAction);
     }
 
-    menu = menuBar()->addMenu("Edit");
+    menu = menuBar()->addMenu(tr("Edit"));
     {
-        action = menu->addAction("Delete shimeji", QKeySequence::StandardKey::Delete);
+        action = menu->addAction(tr("Delete shimeji"), QKeySequence::StandardKey::Delete);
         connect(action, &QAction::triggered, this, &ShijimaManager::deleteAction);
     }
 
-    menu = menuBar()->addMenu("Settings");
+    menu = menuBar()->addMenu(tr("Settings"));
     {
         {
             static const QString key = "multiplicationEnabled";
             bool initial = m_settings.value(key, 
                 QVariant::fromValue(true)).toBool();
 
-            action = menu->addAction("Enable multiplication");
+            action = menu->addAction(tr("Enable multiplication"));
             action->setCheckable(true);
             action->setChecked(initial);
             for (auto &env : m_env) {
@@ -464,7 +465,7 @@ void ShijimaManager::buildToolbar() {
         }
 
         {
-            action = menu->addAction("Windowed mode");
+            action = menu->addAction(tr("Windowed mode"));
             m_windowedModeAction = action;
             action->setCheckable(true);
             action->setChecked(false);
@@ -478,7 +479,7 @@ void ShijimaManager::buildToolbar() {
 
             QColor initial = m_settings.value(key, "#FF0000").toString();
 
-            action = menu->addAction("Windowed mode background...");
+            action = menu->addAction(tr("Windowed mode background..."));
             m_sandboxBackground = initial;
             updateSandboxBackground();
             connect(action, &QAction::triggered, [this](){
@@ -493,7 +494,7 @@ void ShijimaManager::buildToolbar() {
             });
         }
 
-        submenu = menu->addMenu("Scale");
+        submenu = menu->addMenu(tr("Scale"));
         {
             static const QString key = "userScale";
             m_userScale = m_settings.value(key,
@@ -504,8 +505,7 @@ void ShijimaManager::buildToolbar() {
             };
 
             auto makeCustomActionText = [this, makeScaleText]() {
-                return QString { "Custom... (" } +
-                    makeScaleText(m_userScale) + ")";
+                return tr("Custom... (%1)").arg(makeScaleText(m_userScale));
             };
             QAction *customAction = submenu->addAction(makeCustomActionText());
 
@@ -546,7 +546,7 @@ void ShijimaManager::buildToolbar() {
                 QSlider slider { Qt::Horizontal };
                 QLabel label;
                 QPushButton button;
-                button.setText("Save");
+                button.setText(tr("Save"));
                 label.setMinimumWidth(80);
                 slider.setMinimumWidth(300);
                 layout.addRow(&label, &slider);
@@ -577,22 +577,45 @@ void ShijimaManager::buildToolbar() {
                 m_settings.setValue(key, QVariant::fromValue(m_userScale));
             });
         }
+
+        // Language submenu
+        submenu = menu->addMenu(tr("Language"));
+        {
+            auto *langGroup = new QActionGroup(this);
+            langGroup->setExclusive(true);
+
+            action = submenu->addAction("English");
+            action->setCheckable(true);
+            action->setChecked(m_currentLanguage == "en");
+            connect(action, &QAction::triggered, [this]() {
+                switchLanguage("en");
+            });
+            langGroup->addAction(action);
+
+            action = submenu->addAction(QString::fromUtf8("\xe4\xb8\xad\xe6\x96\x87(\xe7\xae\x80\xe4\xbd\x93)"));
+            action->setCheckable(true);
+            action->setChecked(m_currentLanguage == "zh_CN");
+            connect(action, &QAction::triggered, [this]() {
+                switchLanguage("zh_CN");
+            });
+            langGroup->addAction(action);
+        }
     }
 
-    menu = menuBar()->addMenu("Help");
+    menu = menuBar()->addMenu(tr("Help"));
     {
-        action = menu->addAction("View Licenses");
+        action = menu->addAction(tr("View Licenses"));
         connect(action, &QAction::triggered, [this](){
             ShijimaLicensesDialog dialog { this };
             dialog.exec();
         });
 
-        action = menu->addAction("Visit Shijima Homepage");
+        action = menu->addAction(tr("Visit Shijima Homepage"));
         connect(action, &QAction::triggered, [](){
             QDesktopServices::openUrl(QUrl { "https://getshijima.app" });
         });
 
-        action = menu->addAction("Report Issue");
+        action = menu->addAction(tr("Report Issue"));
         connect(action, &QAction::triggered, [](){
             QDesktopServices::openUrl(QUrl { "https://github.com/pixelomer/Shijima-Qt/issues" });
         });
@@ -656,10 +679,10 @@ void ShijimaManager::importWithDialog(QList<QString> const& paths) {
     dialog->setRange(0, 0);
     QPushButton *cancelButton = new QPushButton;
     cancelButton->setEnabled(false);
-    cancelButton->setText("Cancel");
+    cancelButton->setText(tr("Cancel"));
     dialog->setModal(true);
     dialog->setCancelButton(cancelButton);
-    dialog->setLabelText("Importing shimeji...");
+    dialog->setLabelText(tr("Importing shimeji..."));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     //hide();
@@ -678,15 +701,14 @@ void ShijimaManager::importWithDialog(QList<QString> const& paths) {
             QString msg;
             QMessageBox::Icon icon;
             if (changed.size() > 0) {
-                msg = QString::fromStdString("Imported " + std::to_string(changed.size()) +
-                    " mascot" + (changed.size() == 1 ? "" : "s") + ".");
+                msg = tr("Imported %n mascot(s).", "", (int)changed.size());
                 icon = QMessageBox::Icon::Information;
             }
             else {
-                msg = "Could not import any mascots from the specified archive(s).";
+                msg = tr("Could not import any mascots from the specified archive(s).");
                 icon = QMessageBox::Icon::Warning;
             }
-            QMessageBox msgBox { icon, "Import", msg,
+            QMessageBox msgBox { icon, tr("Import"), msg,
                 QMessageBox::StandardButton::Ok, this };
             msgBox.exec();
         });
@@ -707,9 +729,9 @@ void ShijimaManager::showEvent(QShowEvent *event) {
     else {
         if (m_loadedMascots.size() == 1) {
             auto msgBox = new QMessageBox { this };
-            msgBox->setText("Welcome to Shijima! Get started by dragging and dropping a "
+            msgBox->setText(tr("Welcome to Shijima! Get started by dragging and dropping a "
                 "shimeji archive to the manager window. You can also import archives "
-                "by selecting File > Import.");
+                "by selecting File > Import."));
             msgBox->addButton(QMessageBox::StandardButton::Ok);
             msgBox->setAttribute(Qt::WA_DeleteOnClose);
             msgBox->show();
@@ -831,7 +853,10 @@ ShijimaManager::ShijimaManager(QWidget *parent):
     m_sandboxWidget(nullptr),
     m_settings("pixelomer", "Shijima-Qt"),
     m_idCounter(0), m_httpApi(this),
-    m_hasTickCallbacks(false)
+    m_hasTickCallbacks(false),
+    m_translator(nullptr),
+    m_qtTranslator(nullptr),
+    m_currentLanguage("en")
 {
     for (auto screen : QGuiApplication::screens()) {
         screenAdded(screen);
@@ -880,7 +905,16 @@ ShijimaManager::ShijimaManager(QWidget *parent):
     m_listWidget.installEventFilter(this);
     m_listWidget.setSelectionMode(QListWidget::ExtendedSelection);
     setCentralWidget(&m_listWidget);
+
+    // Load saved language before building UI
+    QString savedLang = m_settings.value("language", "en").toString();
+    if (savedLang != "en") {
+        m_currentLanguage = "en"; // force switchLanguage to execute
+        switchLanguage(savedLang);
+    }
+
     buildToolbar();
+    m_constructing = false;
 
     setupTrayIconFor(this);
 
@@ -1013,11 +1047,11 @@ void ShijimaManager::updateEnvironment() {
 void ShijimaManager::askClose() {
     setManagerVisible(true);
     QMessageBox msgBox { this };
-    msgBox.setWindowTitle("Close Shijima-Qt");
+    msgBox.setWindowTitle(tr("Close Shijima-Qt"));
     msgBox.setIcon(QMessageBox::Icon::Question);
     msgBox.setStandardButtons(QMessageBox::StandardButton::Yes |
         QMessageBox::StandardButton::No);
-    msgBox.setText("Do you want to close Shijima-Qt?");
+    msgBox.setText(tr("Do you want to close Shijima-Qt?"));
     int ret = msgBox.exec();
     if (ret == QMessageBox::Button::Yes) {
         #if defined(__APPLE__)
@@ -1251,4 +1285,47 @@ void ShijimaManager::spawnClicked() {
         spawn(pair.first);
         break;
     }
+}
+
+void ShijimaManager::switchLanguage(const QString &langCode) {
+    if (langCode == m_currentLanguage) {
+        return;
+    }
+    // Remove existing translators
+    if (m_translator != nullptr) {
+        qApp->removeTranslator(m_translator);
+        delete m_translator;
+        m_translator = nullptr;
+    }
+    if (m_qtTranslator != nullptr) {
+        qApp->removeTranslator(m_qtTranslator);
+        delete m_qtTranslator;
+        m_qtTranslator = nullptr;
+    }
+    m_currentLanguage = langCode;
+    m_settings.setValue("language", langCode);
+    // Install new translators (skip for English — that's the source language)
+    if (langCode != "en") {
+        m_translator = new QTranslator(this);
+        if (m_translator->load("shijima-qt_" + langCode, ":/i18n")) {
+            qApp->installTranslator(m_translator);
+        }
+        m_qtTranslator = new QTranslator(this);
+        if (m_qtTranslator->load("qt_" + langCode, ":/i18n")) {
+            qApp->installTranslator(m_qtTranslator);
+        }
+    }
+}
+
+void ShijimaManager::retranslateUi() {
+    menuBar()->clear();
+    buildToolbar();
+    rebuildTrayMenuFor(this);
+}
+
+void ShijimaManager::changeEvent(QEvent *event) {
+    if (event->type() == QEvent::LanguageChange && !m_constructing) {
+        retranslateUi();
+    }
+    PlatformWidget::changeEvent(event);
 }

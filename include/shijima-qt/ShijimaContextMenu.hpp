@@ -25,6 +25,7 @@ class QCloseEvent;
 class QActionEvent;
 
 class ShijimaContextMenu : public QMenu {
+    Q_OBJECT
 public:
     ShijimaWidget *shijimaParent() {
         return static_cast<ShijimaWidget *>(parent());

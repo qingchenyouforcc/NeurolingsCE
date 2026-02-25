@@ -28,7 +28,7 @@ option(SHIJIMA_USE_QTMULTIMEDIA "Enable Qt Multimedia support" ON)
 # so keep the SDL2 example off by default to avoid requiring SDL2 at configure time.
 option(SHIJIMA_BUILD_EXAMPLES "Build libshijima SDL2 sandbox example" OFF)
 
-find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Concurrent)
+find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Concurrent LinguistTools)
 if(NOT Qt6_FOUND)
   message(FATAL_ERROR
     "Qt6 not found. Set one of the following and reconfigure:\n"
@@ -124,6 +124,12 @@ target_sources(shijima-qt PRIVATE
   src/app/ShijimaHttpApi.cc
   src/app/cli.cc
   src/resources/resources.qrc
+
+  # Headers with Q_OBJECT (needed for AUTOMOC)
+  include/shijima-qt/ShijimaManager.hpp
+  include/shijima-qt/ShijimaContextMenu.hpp
+  include/shijima-qt/ShijimaLicensesDialog.hpp
+  include/shijima-qt/ShimejiInspectorDialog.hpp
 
   src/platform/Platform/Platform.hpp
   src/platform/Platform/ActiveWindow.hpp
@@ -247,6 +253,25 @@ target_link_libraries(shijima-qt PRIVATE
   Qt6::Concurrent
   shijima
 )
+
+
+# i18n translations
+if(TARGET Qt6::lrelease)
+  # Only compile .ts -> .qm and embed; do NOT run lupdate (which would
+  # overwrite our hand-maintained .ts with unfinished entries).
+  qt_add_lrelease(
+    TS_FILES translations/shijima-qt_zh_CN.ts
+    QM_FILES_OUTPUT_VARIABLE QM_FILES
+  )
+  qt_add_resources(shijima-qt "translations"
+    PREFIX "/i18n"
+    BASE "${CMAKE_CURRENT_BINARY_DIR}"
+    FILES ${QM_FILES}
+  )
+  message(STATUS "Qt LinguistTools found; translations will be compiled and embedded.")
+else()
+  message(WARNING "Qt6 LinguistTools not found; translations will NOT be compiled. Install qt6-tools or equivalent.")
+endif()
 
 if(MSVC)
   # Make running from Visual Studio work without manually editing PATH.

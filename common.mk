@@ -15,6 +15,7 @@ WINDRES ?= $(patsubst %-windres,%-gcc,$(CC))
 AR ?= ar
 CMAKE ?= cmake
 RCC ?= rcc
+LRELEASE ?= lrelease
 
 PLATFORM :=
 PLATFORM_CFLAGS :=

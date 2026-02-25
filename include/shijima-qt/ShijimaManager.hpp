@@ -37,12 +37,14 @@
 #include "shijima-qt/ShijimaWidget.hpp"
 #include "shijima-qt/ShijimaHttpApi.hpp"
 #include <condition_variable>
+#include <QTranslator>
 
 class QVBoxLayout;
 class QWidget;
 
 class ShijimaManager : public PlatformWidget<QMainWindow>
 {
+    Q_OBJECT
 public:
     static ShijimaManager *defaultManager();
     static void finalize();
@@ -71,6 +73,7 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void changeEvent(QEvent *event) override;
 private:
     explicit ShijimaManager(QWidget *parent = nullptr);
     static std::string imgRootForTemplatePath(std::string const& path);
@@ -96,6 +99,8 @@ private:
     std::set<std::string> import(QString const& path) noexcept;
     void importWithDialog(QList<QString> const& paths);
     void tick();
+    void retranslateUi();
+    void switchLanguage(const QString &langCode);
     QScreen *mascotScreen();
     QColor m_sandboxBackground;
     QAction *m_windowedModeAction;
@@ -108,6 +113,7 @@ private:
     bool m_allowClose = false;
     bool m_firstShow = true;
     bool m_wasVisible = false;
+    bool m_constructing = true;
     int m_idCounter;
     double m_userScale = 1.0;
     int m_windowObserverTimer = -1;
@@ -127,4 +133,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_tickCallbackCompletion;
     std::list<std::function<void(ShijimaManager *)>> m_tickCallbacks;
+    QTranslator *m_translator;
+    QTranslator *m_qtTranslator;
+    QString m_currentLanguage;
 };

@@ -29,7 +29,7 @@ ShijimaLicensesDialog::ShijimaLicensesDialog(QWidget *parent): QDialog(parent) {
     m_textEdit.setPlainText(QString::fromStdString(shijima_licenses));
     setMinimumWidth(480);
     setMinimumHeight(480);
-    setWindowTitle("Licenses");
+    setWindowTitle(tr("Licenses"));
     setLayout(windowLayout);
     windowLayout->setContentsMargins(QMargins {});
     windowLayout->addWidget(&m_textEdit);

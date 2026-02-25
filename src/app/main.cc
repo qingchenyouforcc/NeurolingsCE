@@ -54,13 +54,13 @@ int main(int argc, char **argv) {
         pingClient.set_read_timeout(0, 500000);
         auto pingResult = pingClient.Get("/shijima/api/v1/ping");
         if (pingResult != nullptr) {
-            throw std::runtime_error("Shijima-Qt is already running!");
+            throw std::runtime_error(QCoreApplication::translate("main", "Shijima-Qt is already running!").toStdString());
         }
         ShijimaManager::defaultManager()->show();
     }
     catch (std::exception &ex) {
         QMessageBox *msg = new QMessageBox {};
-        msg->setText("Shijima-Qt failed to start. Reason: " +
+        msg->setText(QCoreApplication::translate("main", "Shijima-Qt failed to start. Reason: ") +
             QString::fromUtf8(ex.what()));
         msg->setStandardButtons(QMessageBox::StandardButton::Close);
         msg->setAttribute(Qt::WA_DeleteOnClose);

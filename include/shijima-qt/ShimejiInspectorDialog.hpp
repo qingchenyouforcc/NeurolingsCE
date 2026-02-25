@@ -34,6 +34,7 @@ namespace shijima {
 }
 
 class ShimejiInspectorDialog : public QDialog {
+    Q_OBJECT
 private:
     std::vector<std::function<void()>> m_tickCallbacks;
     QFormLayout *m_formLayout;

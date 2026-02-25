@@ -22,6 +22,7 @@
 #include <QPlainTextEdit>
 
 class ShijimaLicensesDialog : public QDialog {
+    Q_OBJECT
 public:
     ShijimaLicensesDialog(QWidget *parent);
 private:

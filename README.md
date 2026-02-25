@@ -8,4 +8,4 @@ Special modifications have been made for neurolingsCE to better adapt to it.
 
 - Implement pallet - Completed
 - fix Taskbar bug 
-- i18n
+- i18n - Completed

@@ -19,10 +19,14 @@ SOURCES = src/app/main.cc \
 	src/app/ShijimaHttpApi.cc \
 	src/app/cli.cc \
 	src/resources/resources.rc \
-	qrc_resources.cc
+	qrc_resources.cc \
+	qrc_i18n.cc
 
 DEFAULT_MASCOT_FILES := $(addsuffix .png,$(addprefix src/assets/DefaultMascot/img/shime,$(shell seq -s ' ' 1 1 46))) \
 	src/assets/DefaultMascot/behaviors.xml src/assets/DefaultMascot/actions.xml
+
+TS_FILES = translations/shijima-qt_zh_CN.ts
+QM_FILES = $(TS_FILES:.ts=.qm)
 
 LICENSE_FILES := Shijima-Qt.LICENSE.txt \
 	duktape.LICENSE.txt \
@@ -171,6 +175,11 @@ licenses_generated.hpp: $(LICENSE_FILES) Makefile
 qrc_resources.cc: src/resources/resources.qrc src/packaging/shijima-qt.ico src/packaging/com.pixelomer.ShijimaQt.png
 	$(RCC) -o $@ $<
 
+translations/%.qm: translations/%.ts
+	$(LRELEASE) $< -qm $@
+
+qrc_i18n.cc: translations/i18n.qrc $(QM_FILES)
+	$(RCC) -o $@ $<
 libshijima/build/Makefile: libshijima/CMakeLists.txt FORCE
 	mkdir -p libshijima/build && cd libshijima/build && $(CMAKE) $(CMAKEFLAGS) -DSHIJIMA_BUILD_EXAMPLES=NO ..
 
@@ -185,7 +194,7 @@ libshimejifinder/build/libshimejifinder.a: libshimejifinder/build/Makefile
 
 clean::
 	rm -rf publish/$(PLATFORM)/$(CONFIG) libshijima/build libshimejifinder/build
-	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) Shijima-Qt.AppImage qrc_resources.cc
+	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) Shijima-Qt.AppImage qrc_resources.cc qrc_i18n.cc $(QM_FILES)
 	$(MAKE) -C src/platform/Platform clean
 
 install:
@@ -208,4 +217,4 @@ src/platform/Platform/Platform.a: FORCE
 shijima-qt.a: $(OBJECTS) Makefile
 	ar rcs $@ $(filter %.o,$^)
 
-.PHONY: install uninstall
+.PHONY: install uninstall update-translations
