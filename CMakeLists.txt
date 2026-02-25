@@ -103,13 +103,13 @@ if(MSVC)
 endif()
 option(SHIJIMA_WITH_SHIMEJIFINDER "Enable archive import support" ${_SHIJIMA_WITH_SHIMEJIFINDER_DEFAULT})
 
-add_executable(shijima-qt)
+add_executable(NeurolingsCE)
 
 if(MSVC)
-  set_property(TARGET shijima-qt PROPERTY MSVC_RUNTIME_LIBRARY "${_shijima_msvc_runtime}")
+  set_property(TARGET NeurolingsCE PROPERTY MSVC_RUNTIME_LIBRARY "${_shijima_msvc_runtime}")
 endif()
 
-target_sources(shijima-qt PRIVATE
+target_sources(NeurolingsCE PRIVATE
   src/app/main.cc
   src/app/Asset.cc
   src/app/MascotData.cc
@@ -159,11 +159,11 @@ if(SHIJIMA_WITH_DEFAULT_MASCOT)
   )
 
   add_custom_target(shijima_default_mascot_generated DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc")
-  add_dependencies(shijima-qt shijima_default_mascot_generated)
+  add_dependencies(NeurolingsCE shijima_default_mascot_generated)
 
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc" PROPERTIES GENERATED TRUE)
-  target_sources(shijima-qt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc")
-  target_include_directories(shijima-qt PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+  target_sources(NeurolingsCE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/DefaultMascot.cc")
+  target_include_directories(NeurolingsCE PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 else()
   message(FATAL_ERROR "SHIJIMA_WITH_DEFAULT_MASCOT=OFF is not supported yet (DefaultMascot.cc is required).")
 endif()
@@ -191,8 +191,8 @@ if(SHIJIMA_WITH_LICENSES_TEXT)
   )
 
   add_custom_target(shijima_licenses_generated DEPENDS "${_shijima_licenses_header}")
-  add_dependencies(shijima-qt shijima_licenses_generated)
-  target_include_directories(shijima-qt PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+  add_dependencies(NeurolingsCE shijima_licenses_generated)
+  target_include_directories(NeurolingsCE PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 else()
   message(FATAL_ERROR "SHIJIMA_WITH_LICENSES_TEXT=OFF is not supported yet (licenses_generated.hpp is required).")
 endif()
@@ -201,7 +201,7 @@ endif()
 set_source_files_properties(src/app/ShijimaLicensesDialog.cc PROPERTIES OBJECT_DEPENDS "${_shijima_licenses_header}")
 
 if(WIN32)
-  target_sources(shijima-qt PRIVATE
+  target_sources(NeurolingsCE PRIVATE
     src/resources/resources.rc
     src/platform/Platform/Windows/Platform.cc
     src/platform/Platform/Windows/ActiveWindowObserver.cc
@@ -209,14 +209,14 @@ if(WIN32)
     src/platform/Platform/Windows/PrivateActiveWindowObserver.hpp
   )
 elseif(APPLE)
-  target_sources(shijima-qt PRIVATE
+  target_sources(NeurolingsCE PRIVATE
     src/platform/Platform/macOS/Platform.mm
     src/platform/Platform/macOS/ActiveWindowObserver.cc
     src/platform/Platform/macOS/PrivateActiveWindowObserver.mm
     src/platform/Platform/macOS/PrivateActiveWindowObserver.hpp
   )
 elseif(UNIX)
-  target_sources(shijima-qt PRIVATE
+  target_sources(NeurolingsCE PRIVATE
     src/platform/Platform/Linux/Platform.cc
     src/platform/Platform/Linux/ActiveWindowObserver.cc
     src/platform/Platform/Linux/PrivateActiveWindowObserver.cc
@@ -230,7 +230,7 @@ elseif(UNIX)
   )
 endif()
 
-target_include_directories(shijima-qt PRIVATE
+target_include_directories(NeurolingsCE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
@@ -239,14 +239,14 @@ target_include_directories(shijima-qt PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp-httplib
 )
 
-target_compile_definitions(shijima-qt PRIVATE
+target_compile_definitions(NeurolingsCE PRIVATE
   $<$<BOOL:${SHIJIMA_USE_QTMULTIMEDIA}>:SHIJIMA_USE_QTMULTIMEDIA=1>
   $<$<NOT:$<BOOL:${SHIJIMA_USE_QTMULTIMEDIA}>>:SHIJIMA_USE_QTMULTIMEDIA=0>
   $<$<BOOL:${SHIJIMA_WITH_SHIMEJIFINDER}>:SHIJIMA_WITH_SHIMEJIFINDER=1>
   $<$<NOT:$<BOOL:${SHIJIMA_WITH_SHIMEJIFINDER}>>:SHIJIMA_WITH_SHIMEJIFINDER=0>
 )
 
-target_link_libraries(shijima-qt PRIVATE
+target_link_libraries(NeurolingsCE PRIVATE
   Qt6::Core
   Qt6::Gui
   Qt6::Widgets
@@ -263,7 +263,7 @@ if(TARGET Qt6::lrelease)
     TS_FILES translations/shijima-qt_zh_CN.ts
     QM_FILES_OUTPUT_VARIABLE QM_FILES
   )
-  qt_add_resources(shijima-qt "translations"
+  qt_add_resources(NeurolingsCE "translations"
     PREFIX "/i18n"
     BASE "${CMAKE_CURRENT_BINARY_DIR}"
     FILES ${QM_FILES}
@@ -276,7 +276,7 @@ endif()
 if(MSVC)
   # Make running from Visual Studio work without manually editing PATH.
   # This points PATH at the Qt bin directory (where Qt6Guid.dll lives in Debug).
-  set_property(TARGET shijima-qt PROPERTY VS_DEBUGGER_ENVIRONMENT
+  set_property(TARGET NeurolingsCE PROPERTY VS_DEBUGGER_ENVIRONMENT
     "PATH=$<TARGET_FILE_DIR:Qt6::Core>\;%PATH%")
 endif()
 
@@ -299,44 +299,44 @@ if(WIN32)
   endif()
 
   if(QT_WINDEPLOYQT_EXECUTABLE)
-    add_custom_command(TARGET shijima-qt POST_BUILD
+    add_custom_command(TARGET NeurolingsCE POST_BUILD
       COMMAND "${QT_WINDEPLOYQT_EXECUTABLE}"
               --no-translations
               --no-system-d3d-compiler
-              "$<TARGET_FILE:shijima-qt>"
-      WORKING_DIRECTORY "$<TARGET_FILE_DIR:shijima-qt>"
+              "$<TARGET_FILE:NeurolingsCE>"
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:NeurolingsCE>"
       VERBATIM
     )
   else()
-    message(WARNING "windeployqt not found; shijima-qt.exe may fail to start outside of a Qt environment (missing Qt6Guid.dll).")
+    message(WARNING "windeployqt not found; NeurolingsCE.exe may fail to start outside of a Qt environment (missing Qt6Guid.dll).")
   endif()
 endif()
 
 if(SHIJIMA_WITH_SHIMEJIFINDER)
   if(SHIJIMA_WITH_LIBSHIMEJIFINDER)
-    target_link_libraries(shijima-qt PRIVATE shimejifinder)
-    target_compile_definitions(shijima-qt PRIVATE SHIMEJIFINDER_NO_LIBARCHIVE=0 SHIMEJIFINDER_NO_LIBUNARR=0)
+    target_link_libraries(NeurolingsCE PRIVATE shimejifinder)
+    target_compile_definitions(NeurolingsCE PRIVATE SHIMEJIFINDER_NO_LIBARCHIVE=0 SHIMEJIFINDER_NO_LIBUNARR=0)
   else()
     message(FATAL_ERROR "SHIJIMA_WITH_SHIMEJIFINDER=ON requires SHIJIMA_WITH_LIBSHIMEJIFINDER=ON for now.")
   endif()
 else()
-  target_compile_definitions(shijima-qt PRIVATE
+  target_compile_definitions(NeurolingsCE PRIVATE
     SHIMEJIFINDER_NO_LIBARCHIVE=1
     SHIMEJIFINDER_NO_LIBUNARR=1
   )
 endif()
 
 if(SHIJIMA_USE_QTMULTIMEDIA)
-  target_link_libraries(shijima-qt PRIVATE Qt6::Multimedia)
+  target_link_libraries(NeurolingsCE PRIVATE Qt6::Multimedia)
 endif()
 
 if(WIN32)
-  target_compile_definitions(shijima-qt PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-  set_target_properties(shijima-qt PROPERTIES WIN32_EXECUTABLE TRUE)
+  target_compile_definitions(NeurolingsCE PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  set_target_properties(NeurolingsCE PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
 # Deploy Qt runtime DLLs next to the executable on Windows.
-# This fixes runtime errors like missing Qt6Guid.dll when running shijima-qt.exe
+# This fixes runtime errors like missing Qt6Guid.dll when running NeurolingsCE.exe
 # outside of Visual Studio (e.g., from the build/install folder).
 if(WIN32)
   get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION_RELEASE)
@@ -352,13 +352,13 @@ if(WIN32)
   endif()
 
   if(QT_WINDEPLOYQT_EXECUTABLE)
-    install(TARGETS shijima-qt RUNTIME DESTINATION .)
+    install(TARGETS NeurolingsCE RUNTIME DESTINATION .)
     install(CODE [[
       execute_process(
         COMMAND "${QT_WINDEPLOYQT_EXECUTABLE}"
                 --no-translations
                 --no-system-d3d-compiler
-                "$<TARGET_FILE:shijima-qt>"
+                "$<TARGET_FILE:NeurolingsCE>"
         WORKING_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
         COMMAND_ERROR_IS_FATAL ANY
       )
