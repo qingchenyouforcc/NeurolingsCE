@@ -39,6 +39,7 @@ class ShijimaWidget : public PlatformWidget<QWidget>
 {
 public:
     friend class ShijimaContextMenu;
+    friend class ShijimaManager;
     explicit ShijimaWidget(MascotData *mascotData,
         std::unique_ptr<shijima::mascot::manager> mascot,
         int mascotId, bool windowedMode, QWidget *parent = nullptr);
@@ -67,6 +68,7 @@ public:
         return m_data->name();
     }
     ~ShijimaWidget();
+    bool isFallThroughMode() const { return m_fallThroughMode; }
 protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
@@ -100,4 +102,9 @@ private:
     bool m_paused = false;
     bool m_markedForDeletion = false;
     int m_mascotId;
+    // Fall-through tracking: when mascot falls 700+ pixels, it bypasses
+    // the taskbar floor and lands at the absolute screen bottom.
+    bool m_fallTracking = false;
+    double m_fallStartY = 0.0;
+    bool m_fallThroughMode = false;
 };

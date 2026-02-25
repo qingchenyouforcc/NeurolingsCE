@@ -1167,7 +1167,55 @@ void ShijimaManager::tick() {
             m_mascotsById.erase(mascotId);
             continue;
         }
+        // --- Fall-through tracking ---
+        // Before tick: if mascot is in fall-through mode, temporarily
+        // lower the floor to the absolute screen bottom (past taskbar).
+        double savedFloorY = 0.0;
+        bool didOverrideFloor = false;
+        if (shimeji->isFallThroughMode()) {
+            savedFloorY = shimeji->env()->floor.y;
+            shimeji->env()->floor.y = shimeji->env()->screen.bottom;
+            shimeji->env()->work_area.bottom = shimeji->env()->screen.bottom;
+            didOverrideFloor = true;
+        }
+
+        double anchorYBefore = shimeji->mascot().state->anchor.y;
         shimeji->tick();
+
+        // After tick: restore floor if overridden, then update fall tracking.
+        if (didOverrideFloor) {
+            shimeji->env()->floor.y = savedFloorY;
+            shimeji->env()->work_area.bottom = savedFloorY;
+        }
+
+        // Track falling state for fall-through detection.
+        if (!windowedMode()) {
+            double anchorYAfter = shimeji->mascot().state->anchor.y;
+            bool onLand = shimeji->mascot().state->on_land();
+            bool isDragging = shimeji->mascot().state->dragging;
+
+            // Reset fall-through when mascot is dragged (picked up)
+            if (isDragging && shimeji->isFallThroughMode()) {
+                shimeji->m_fallThroughMode = false;
+                shimeji->m_fallTracking = false;
+            }
+
+            if (!onLand && !isDragging && anchorYAfter > anchorYBefore) {
+                // Mascot is falling
+                if (!shimeji->m_fallTracking) {
+                    shimeji->m_fallTracking = true;
+                    shimeji->m_fallStartY = anchorYBefore;
+                }
+                double fallDistance = anchorYAfter - shimeji->m_fallStartY;
+                if (fallDistance >= 700.0) {
+                    shimeji->m_fallThroughMode = true;
+                }
+            }
+            else {
+                // Not falling (on land, dragging, or moving upward)
+                shimeji->m_fallTracking = false;
+            }
+        }
         auto &mascot = shimeji->mascot();
         auto &breedRequest = mascot.state->breed_request;
         if (mascot.state->dragging && !windowedMode()) {
