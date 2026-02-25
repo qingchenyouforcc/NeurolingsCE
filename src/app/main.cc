@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     #endif
     QApplication app(argc, argv);
     app.setApplicationName("NeurolingsCE");
-    app.setApplicationDisplayName("NeurolingsCE Based on Shijima-Qt");
+    app.setApplicationDisplayName("NeurolingsCE[Shijima-Qt Edition]");
     {
         QIcon appIcon { QStringLiteral(":/shijima-qt.ico") };
         if (appIcon.isNull()) {
