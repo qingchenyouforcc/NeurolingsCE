@@ -37,8 +37,8 @@ int main(int argc, char **argv) {
         shijima::set_log_level(SHIJIMA_LOG_PARSER | SHIJIMA_LOG_WARNINGS);
     #endif
     QApplication app(argc, argv);
-    app.setApplicationName("Shijima-Qt");
-    app.setApplicationDisplayName("Shijima-Qt");
+    app.setApplicationName("NeurolingsCE");
+    app.setApplicationDisplayName("NeurolingsCE Based on Shijima-Qt");
     {
         QIcon appIcon { QStringLiteral(":/shijima-qt.ico") };
         if (appIcon.isNull()) {
