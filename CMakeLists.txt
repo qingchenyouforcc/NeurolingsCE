@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ShijimaQt LANGUAGES CXX)
+project(NeurolingsCE LANGUAGES CXX)
 
 if(MSVC)
   # This project expects a 64-bit Qt when using Qt's msvc2022_64 kit.
