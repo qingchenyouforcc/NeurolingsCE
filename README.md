@@ -24,6 +24,10 @@
 - [最新版本](https://github.com/qingchenyouforcc/NeurolingsCE/releases/latest)
 - [所有版本](https://github.com/qingchenyouforcc/NeurolingsCE/releases)
 
+## 文档
+
+📖 **[Wiki 文档](https://github.com/qingchenyouforcc/NeurolingsCE/wiki)** — 包含快速开始、构建指南、架构说明、HTTP API、常见问题等完整文档。
+
 ## 构建
 
 ### 前置依赖

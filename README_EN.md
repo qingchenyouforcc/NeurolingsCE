@@ -24,6 +24,10 @@ Built with C++17 / Qt6, supporting Windows, Linux, and macOS.
 - [Latest Release](https://github.com/qingchenyouforcc/NeurolingsCE/releases/latest)
 - [All Releases](https://github.com/qingchenyouforcc/NeurolingsCE/releases)
 
+## Documentation
+
+📖 **[Wiki](https://github.com/qingchenyouforcc/NeurolingsCE/wiki)** — Full documentation including getting started, build guide, architecture, HTTP API, FAQ, and more.
+
 ## Building
 
 ### Prerequisites
