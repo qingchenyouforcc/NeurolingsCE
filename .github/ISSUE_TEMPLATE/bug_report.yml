@@ -1,0 +1,78 @@
+name: "🐛 Bug 报告 / Bug Report"
+description: "报告一个问题 / Report a bug"
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提交 Bug 报告！请尽量填写以下信息以帮助我们定位问题。
+        Thanks for filing a bug report! Please fill in as much detail as possible.
+
+  - type: input
+    id: version
+    attributes:
+      label: "版本 / Version"
+      description: "你使用的 NeurolingsCE 版本号（如 v1.0.0）/ NeurolingsCE version (e.g. v1.0.0)"
+      placeholder: "v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: "操作系统 / Operating System"
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux (KDE)
+        - Linux (GNOME)
+        - Linux (Other)
+        - macOS
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "问题描述 / Bug Description"
+      description: "清晰地描述遇到的问题 / A clear description of the bug"
+      placeholder: "发生了什么？/ What happened?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "复现步骤 / Steps to Reproduce"
+      description: "如何复现这个问题？/ How can we reproduce this?"
+      placeholder: |
+        1. 打开程序 / Open the app
+        2. 点击 ... / Click ...
+        3. 看到错误 / See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "预期行为 / Expected Behavior"
+      description: "你期望发生什么？/ What did you expect to happen?"
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "截图 / Screenshots"
+      description: "如果有的话，附上截图 / If applicable, add screenshots"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "其他信息 / Additional Context"
+      description: "日志、看板娘资源包信息等 / Logs, mascot pack info, etc."
+    validations:
+      required: false
