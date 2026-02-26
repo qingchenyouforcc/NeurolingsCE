@@ -154,11 +154,11 @@ NeurolingsCE/
 
 如果你对neuro同人文感兴趣的话，请加入文学社谢谢喵
 
-**NeuroEcho文学社1063898428**
+**NeuroEcho文学社QQ群1063898428**
 
 请加入NeuroSama吧群谢谢喵
 
-**NeuroSama吧群734688012**
+**NeuroSama吧QQ群734688012**
 
 ---
 
