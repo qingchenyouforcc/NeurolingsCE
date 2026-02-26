@@ -131,6 +131,16 @@ NeurolingsCE/
 - **反馈 QQ 群**：423902950
 - **交流 QQ 群**：125081756
 
+**如果你对neuro社区项目开发感兴趣的话**
+  
+**可以联系我加入NeuForge Center**
+
+**请加入STNC了解更多内容**
+
+**STNC蜂群技术情报中心QQ群 125081756**
+
+**STNC项目反馈QQ群 423902950**
+
 ## 许可证
 
 本项目基于 [GNU General Public License v3.0](LICENSE) 开源。
@@ -141,26 +151,17 @@ NeurolingsCE/
 
 ---
 ## 广告位
-**如果你对neuro社区项目开发感兴趣的话**
 
-**可以联系我加入NeuForge Center**
+如果你对neuro同人文感兴趣的话，请加入文学社谢谢喵
 
-**请加入STNC了解更多内容**
-
-**STNC蜂群技术情报中心 125081756**
-
-**STNC项目反馈群 423902950**
+**NeuroEcho文学社1063898428**
 
 请加入NeuroSama吧群谢谢喵
 
 **NeuroSama吧群734688012**
 
-请加入文学社谢谢喵
-
-**NeuroEcho文学社1063898428**
-
 ---
 
 ## Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=qingchenyouforcc/neuroSangSpider&type=Date)](https://star-history.com/#qingchenyouforcc/neuroSangSpider&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qingchenyouforcc/NeurolingsCE&type=Date)](https://star-history.com/#qingchenyouforcc/NeurolingsCE&Date)
