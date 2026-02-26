@@ -62,7 +62,7 @@ else
 CXXFLAGS += -DSHIJIMA_USE_QTMULTIMEDIA=0
 endif
 
-CXXFLAGS += -Iinclude -Ilibshijima -Ilibshimejifinder -Icpp-httplib
+CXXFLAGS += -Iinclude -Ilibshijima -Ilibshimejifinder -Icpp-httplib -DNEUROLINGSCE_VERSION='"0.1.0"'
 PKG_LIBS += libarchive
 PUBLISH_DLL = $(addprefix Qt6,$(QT_LIBS))
 
@@ -125,24 +125,24 @@ publish/Linux/$(CONFIG): shijima-qt$(EXE)
 	if [ $(CONFIG) = release ]; then $(STRIP) -S $@/libunarr.so.1; fi
 	@$(call copy_changed,$<,$@)
 
-publish/macOS/$(CONFIG)/Shijima-Qt.app: publish/macOS/$(CONFIG)
+publish/macOS/$(CONFIG)/NeurolingsCE.app: publish/macOS/$(CONFIG)
 	rm -rf $@ && [ ! -d $@ ]
-	cp -r src/packaging/Shijima-Qt.app $@
+	cp -r src/packaging/NeurolingsCE.app $@
 	mkdir -p $@/Contents/MacOS
 	cp publish/macOS/$(CONFIG)/shijima-qt $@/Contents/MacOS/
 	/opt/local/libexec/qt6/bin/macdeployqt $@
 
-publish/Linux/$(CONFIG)/Shijima-Qt.AppImage: publish/Linux/$(CONFIG) linuxdeploy.AppImage
+publish/Linux/$(CONFIG)/NeurolingsCE.AppImage: publish/Linux/$(CONFIG) linuxdeploy.AppImage
 	rm -rf AppDir
 	NO_STRIP=1 ./linuxdeploy.AppImage --appdir AppDir --executable publish/Linux/$(CONFIG)/shijima-qt \
-		--desktop-file src/packaging/com.pixelomer.ShijimaQt.desktop --output appimage --plugin qt --icon-file \
-		src/packaging/com.pixelomer.ShijimaQt.png
-	mv Shijima-Qt-*.AppImage Shijima-Qt.AppImage
-	cp Shijima-Qt.AppImage publish/Linux/$(CONFIG)/
+		--desktop-file src/packaging/io.github.qingchenyouforcc.NeurolingsCE.desktop --output appimage --plugin qt --icon-file \
+		src/packaging/io.github.qingchenyouforcc.NeurolingsCE.png
+	mv NeurolingsCE-*.AppImage NeurolingsCE.AppImage
+	cp NeurolingsCE.AppImage publish/Linux/$(CONFIG)/
 
-appimage: publish/Linux/$(CONFIG)/Shijima-Qt.AppImage
+appimage: publish/Linux/$(CONFIG)/NeurolingsCE.AppImage
 
-macapp: publish/macOS/$(CONFIG)/Shijima-Qt.app
+macapp: publish/macOS/$(CONFIG)/NeurolingsCE.app
 
 shijima-qt$(EXE): src/platform/Platform/Platform.a libshimejifinder/build/libshimejifinder.a \
 	libshijima/build/libshijima.a shijima-qt.a
@@ -162,7 +162,7 @@ src/app/ShijimaLicensesDialog.cc: licenses_generated.hpp
 
 licenses_generated.hpp: $(LICENSE_FILES) Makefile
 	echo 'static const char *shijima_licenses = R"(' > licenses_generated.hpp
-	echo 'Licenses for the software components used in Shijima-Qt are listed below.' >> licenses_generated.hpp
+	echo 'Licenses for the software components used in NeurolingsCE are listed below.' >> licenses_generated.hpp
 	for file in $^; do \
 		[ "$$file" != "Makefile" ] || continue; \
 		(echo; echo) >> licenses_generated.hpp; \
@@ -172,7 +172,7 @@ licenses_generated.hpp: $(LICENSE_FILES) Makefile
 	done
 	echo ')";' >> licenses_generated.hpp
 
-qrc_resources.cc: src/resources/resources.qrc src/packaging/shijima-qt.ico src/packaging/com.pixelomer.ShijimaQt.png
+qrc_resources.cc: src/resources/resources.qrc src/packaging/neurolingsce.ico src/packaging/io.github.qingchenyouforcc.NeurolingsCE.png
 	$(RCC) -o $@ $<
 
 translations/%.qm: translations/%.ts
@@ -194,22 +194,22 @@ libshimejifinder/build/libshimejifinder.a: libshimejifinder/build/Makefile
 
 clean::
 	rm -rf publish/$(PLATFORM)/$(CONFIG) libshijima/build libshimejifinder/build
-	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) Shijima-Qt.AppImage qrc_resources.cc qrc_i18n.cc $(QM_FILES)
+	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) NeurolingsCE.AppImage qrc_resources.cc qrc_i18n.cc $(QM_FILES)
 	$(MAKE) -C src/platform/Platform clean
 
 install:
 	install -Dm755 publish/Linux/$(CONFIG)/shijima-qt $(PREFIX)/bin/shijima-qt
 	install -Dm755 publish/Linux/$(CONFIG)/libunarr.so.1 $(PREFIX)/lib/libunarr.so.1
-	install -Dm644 src/packaging/com.pixelomer.ShijimaQt.desktop $(PREFIX)/share/applications/com.pixelomer.ShijimaQt.desktop
-	install -Dm644 src/packaging/com.pixelomer.ShijimaQt.metainfo.xml $(PREFIX)/share/metainfo/com.pixelomer.ShijimaQt.metainfo.xml
-	install -Dm644 src/packaging/com.pixelomer.ShijimaQt.png $(PREFIX)/share/icons/hicolor/512x512/apps/com.pixelomer.ShijimaQt.png
+	install -Dm644 src/packaging/io.github.qingchenyouforcc.NeurolingsCE.desktop $(PREFIX)/share/applications/io.github.qingchenyouforcc.NeurolingsCE.desktop
+	install -Dm644 src/packaging/io.github.qingchenyouforcc.NeurolingsCE.metainfo.xml $(PREFIX)/share/metainfo/io.github.qingchenyouforcc.NeurolingsCE.metainfo.xml
+	install -Dm644 src/packaging/io.github.qingchenyouforcc.NeurolingsCE.png $(PREFIX)/share/icons/hicolor/512x512/apps/io.github.qingchenyouforcc.NeurolingsCE.png
 
 uninstall:
 	rm -f $(PREFIX)/bin/shijima-qt
 	rm -f $(PREFIX)/lib/libunarr.so.1
-	rm -f $(PREFIX)/share/applications/com.pixelomer.ShijimaQt.desktop
-	rm -f $(PREFIX)/share/metainfo/com.pixelomer.ShijimaQt.metainfo.xml
-	rm -f $(PREFIX)/share/icons/hicolor/512x512/apps/com.pixelomer.ShijimaQt.png
+	rm -f $(PREFIX)/share/applications/io.github.qingchenyouforcc.NeurolingsCE.desktop
+	rm -f $(PREFIX)/share/metainfo/io.github.qingchenyouforcc.NeurolingsCE.metainfo.xml
+	rm -f $(PREFIX)/share/icons/hicolor/512x512/apps/io.github.qingchenyouforcc.NeurolingsCE.png
 
 src/platform/Platform/Platform.a: FORCE
 	$(MAKE) -C src/platform/Platform

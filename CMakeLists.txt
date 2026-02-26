@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(NeurolingsCE LANGUAGES CXX)
+project(NeurolingsCE VERSION 0.1.0 LANGUAGES CXX)
 
 if(MSVC)
   # This project expects a 64-bit Qt when using Qt's msvc2022_64 kit.
@@ -240,6 +240,7 @@ target_include_directories(NeurolingsCE PRIVATE
 )
 
 target_compile_definitions(NeurolingsCE PRIVATE
+  NEUROLINGSCE_VERSION="${PROJECT_VERSION}"
   $<$<BOOL:${SHIJIMA_USE_QTMULTIMEDIA}>:SHIJIMA_USE_QTMULTIMEDIA=1>
   $<$<NOT:$<BOOL:${SHIJIMA_USE_QTMULTIMEDIA}>>:SHIJIMA_USE_QTMULTIMEDIA=0>
   $<$<BOOL:${SHIJIMA_WITH_SHIMEJIFINDER}>:SHIJIMA_WITH_SHIMEJIFINDER=1>

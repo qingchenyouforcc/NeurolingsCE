@@ -71,6 +71,10 @@
 
 #define SHIJIMAQT_SUBTICK_COUNT 4
 
+#ifndef NEUROLINGSCE_VERSION
+#define NEUROLINGSCE_VERSION "0.1.0"
+#endif
+
 using namespace shijima;
 
 static QString colorToString(QColor const& color) {
@@ -622,8 +626,9 @@ void ShijimaManager::buildToolbar() {
 
         action = menu->addAction(tr("About"));
         connect(action, &QAction::triggered, [this](){
+            QString version = QStringLiteral(NEUROLINGSCE_VERSION);
             QMessageBox::about(this, tr("About NeurolingsCE"),
-                tr("<h3>NeurolingsCE</h3>"
+                tr("<h3>NeurolingsCE v%4</h3>"
                    "<p>A cross-platform shimeji desktop pet runner.</p>"
                    "<p>Author: <a href='https://space.bilibili.com/178381315'>%1</a></p>"
                    "<p>Based on <a href='https://github.com/pixelomer/Shijima-Qt'>Shijima-Qt</a> by pixelomer.</p>"
@@ -632,7 +637,8 @@ void ShijimaManager::buildToolbar() {
                    "<p>Chat QQ Group: %3</p>")
                 .arg(QString::fromUtf8("\xe8\xbd\xbb\xe5\xb0\x98\xe5\x91\xa6"))
                 .arg(QStringLiteral("423902950"))
-                .arg(QStringLiteral("125081756")));
+                .arg(QStringLiteral("125081756"))
+                .arg(version));
         });
     }
 }

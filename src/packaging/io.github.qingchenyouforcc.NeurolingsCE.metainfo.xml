@@ -17,6 +17,7 @@
         <name>qingchenyouforcc</name>
     </developer>
     <releases>
+        <release version="0.1.0" date="2026-02-26" />
     </releases>
     <url type="homepage">https://github.com/qingchenyouforcc/NeurolingsCE</url>
     <url type="contribute">https://github.com/qingchenyouforcc/NeurolingsCE</url>
