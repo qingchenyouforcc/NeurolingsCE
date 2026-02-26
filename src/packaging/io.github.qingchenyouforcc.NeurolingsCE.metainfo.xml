@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+    <id>io.github.qingchenyouforcc.NeurolingsCE</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0</project_license>
+    <name>NeurolingsCE</name>
+    <summary>Shimeji desktop pet runner</summary>
+    <description>
+        <p>
+            NeurolingsCE is a cross-platform shimeji desktop pet runner based on
+            Shijima-Qt. It has been extensively modified to serve as a standalone
+            project with enhanced features and better adaptation for NeurolingsCE.
+        </p>
+    </description>
+    <launchable type="desktop-id">io.github.qingchenyouforcc.NeurolingsCE.desktop</launchable>
+    <developer id="io.github.qingchenyouforcc">
+        <name>qingchenyouforcc</name>
+    </developer>
+    <releases>
+    </releases>
+    <url type="homepage">https://github.com/qingchenyouforcc/NeurolingsCE</url>
+    <url type="contribute">https://github.com/qingchenyouforcc/NeurolingsCE</url>
+    <url type="bugtracker">https://github.com/qingchenyouforcc/NeurolingsCE/issues</url>
+    <content_rating type="oars-1.1" />
+</component>

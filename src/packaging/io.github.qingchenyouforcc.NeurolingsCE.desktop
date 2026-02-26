@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NeurolingsCE
+Comment=Shimeji desktop pet runner
+Exec=NeurolingsCE
+Icon=io.github.qingchenyouforcc.NeurolingsCE
+Terminal=false
+Categories=Game
