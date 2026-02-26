@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(NeurolingsCE VERSION 0.1.0 LANGUAGES CXX)
+project(NeurolingsCE VERSION 0.1.0 LANGUAGES C CXX)
 
 if(MSVC)
   # This project expects a 64-bit Qt when using Qt's msvc2022_64 kit.
@@ -123,6 +123,7 @@ target_sources(NeurolingsCE PRIVATE
   src/app/ShimejiInspectorDialog.cc
   src/app/ShijimaHttpApi.cc
   src/app/cli.cc
+  src/app/SimpleZipImporter.cc
   src/resources/resources.qrc
 
   # Headers with Q_OBJECT (needed for AUTOMOC)
@@ -237,6 +238,7 @@ target_include_directories(NeurolingsCE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/libshijima
   ${CMAKE_CURRENT_SOURCE_DIR}/libshimejifinder
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp-httplib
+  ${CMAKE_CURRENT_SOURCE_DIR}/miniz
 )
 
 target_compile_definitions(NeurolingsCE PRIVATE
@@ -312,6 +314,10 @@ if(WIN32)
     message(WARNING "windeployqt not found; NeurolingsCE.exe may fail to start outside of a Qt environment (missing Qt6Guid.dll).")
   endif()
 endif()
+
+# miniz (lightweight ZIP library for SimpleZipImporter, always built)
+target_sources(NeurolingsCE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/miniz/miniz.c)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/miniz/miniz.c PROPERTIES LANGUAGE C)
 
 if(SHIJIMA_WITH_SHIMEJIFINDER)
   if(SHIJIMA_WITH_LIBSHIMEJIFINDER)
