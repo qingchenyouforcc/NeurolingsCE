@@ -136,3 +136,31 @@ NeurolingsCE/
 本项目基于 [GNU General Public License v3.0](LICENSE) 开源。
 
 上游项目 Shijima-Qt 的 README 见 [Shijima-Qt_README.md](Shijima-Qt_README.md)。
+
+![](https://qingchenyou-1301914189.cos.ap-beijing.myqcloud.com/681dcdd42da7fc5484c1dd3a9875b54a_324.png)
+
+---
+## 广告位
+**如果你对neuro社区项目开发感兴趣的话**
+
+**可以联系我加入NeuForge Center**
+
+**请加入STNC了解更多内容**
+
+**STNC蜂群技术情报中心 125081756**
+
+**STNC项目反馈群 423902950**
+
+请加入NeuroSama吧群谢谢喵
+
+**NeuroSama吧群734688012**
+
+请加入文学社谢谢喵
+
+**NeuroEcho文学社1063898428**
+
+---
+
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=qingchenyouforcc/neuroSangSpider&type=Date)](https://star-history.com/#qingchenyouforcc/neuroSangSpider&Date)
