@@ -100,6 +100,18 @@
         <translation>报告问题</translation>
     </message>
     <message>
+        <source>About</source>
+        <translation>关于</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeurolingsCE&lt;/h3&gt;&lt;p&gt;A cross-platform shimeji desktop pet runner.&lt;/p&gt;&lt;p&gt;Author: &lt;a href=&apos;https://space.bilibili.com/178381315&apos;&gt;%1&lt;/a&gt;&lt;/p&gt;&lt;p&gt;Based on &lt;a href=&apos;https://github.com/pixelomer/Shijima-Qt&apos;&gt;Shijima-Qt&lt;/a&gt; by pixelomer.&lt;/p&gt;&lt;p&gt;Project: &lt;a href=&apos;https://github.com/qingchenyouforcc/NeurolingsCE&apos;&gt;GitHub&lt;/a&gt;&lt;/p&gt;&lt;p&gt;Feedback QQ Group: %2&lt;/p&gt;&lt;p&gt;Chat QQ Group: %3&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeurolingsCE&lt;/h3&gt;&lt;p&gt;跨平台桌面看板娘应用。&lt;/p&gt;&lt;p&gt;作者：&lt;a href=&apos;https://space.bilibili.com/178381315&apos;&gt;%1&lt;/a&gt;&lt;/p&gt;&lt;p&gt;基于 pixelomer 的 &lt;a href=&apos;https://github.com/pixelomer/Shijima-Qt&apos;&gt;Shijima-Qt&lt;/a&gt;。&lt;/p&gt;&lt;p&gt;项目地址：&lt;a href=&apos;https://github.com/qingchenyouforcc/NeurolingsCE&apos;&gt;GitHub&lt;/a&gt;&lt;/p&gt;&lt;p&gt;反馈QQ群：%2&lt;/p&gt;&lt;p&gt;交流QQ群：%3&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>About NeurolingsCE</source>
+        <translation>关于 NeurolingsCE</translation>
+    </message>
+    <message>
         <source>Choose shimeji archive...</source>
         <translation>选择看板娘压缩包...</translation>
     </message>

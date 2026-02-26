@@ -100,7 +100,7 @@ static ShijimaManager *m_defaultManager = nullptr;
 static QIcon makeTrayIconFallback(QWidget *w) {
     // Prefer the icon embedded via Qt resource system (resources.qrc).
     {
-        QIcon ico { QStringLiteral(":/shijima-qt.ico") };
+        QIcon ico { QStringLiteral(":/neurolingsce.ico") };
         if (!ico.isNull()) {
             return ico;
         }
@@ -108,7 +108,7 @@ static QIcon makeTrayIconFallback(QWidget *w) {
 
     // Fallback: try the PNG resource.
     {
-        QIcon ico { QStringLiteral(":/shijima-qt.png") };
+        QIcon ico { QStringLiteral(":/neurolingsce.png") };
         if (!ico.isNull()) {
             return ico;
         }
@@ -617,7 +617,22 @@ void ShijimaManager::buildToolbar() {
 
         action = menu->addAction(tr("Report Issue"));
         connect(action, &QAction::triggered, [](){
-            QDesktopServices::openUrl(QUrl { "https://github.com/pixelomer/Shijima-Qt/issues" });
+            QDesktopServices::openUrl(QUrl { "https://github.com/qingchenyouforcc/NeurolingsCE/issues" });
+        });
+
+        action = menu->addAction(tr("About"));
+        connect(action, &QAction::triggered, [this](){
+            QMessageBox::about(this, tr("About NeurolingsCE"),
+                tr("<h3>NeurolingsCE</h3>"
+                   "<p>A cross-platform shimeji desktop pet runner.</p>"
+                   "<p>Author: <a href='https://space.bilibili.com/178381315'>%1</a></p>"
+                   "<p>Based on <a href='https://github.com/pixelomer/Shijima-Qt'>Shijima-Qt</a> by pixelomer.</p>"
+                   "<p>Project: <a href='https://github.com/qingchenyouforcc/NeurolingsCE'>GitHub</a></p>"
+                   "<p>Feedback QQ Group: %2</p>"
+                   "<p>Chat QQ Group: %3</p>")
+                .arg(QString::fromUtf8("\xe8\xbd\xbb\xe5\xb0\x98\xe5\x91\xa6"))
+                .arg(QStringLiteral("423902950"))
+                .arg(QStringLiteral("125081756")));
         });
     }
 }

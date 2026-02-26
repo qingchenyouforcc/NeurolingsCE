@@ -40,9 +40,9 @@ int main(int argc, char **argv) {
     app.setApplicationName("NeurolingsCE");
     app.setApplicationDisplayName("NeurolingsCE[Shijima-Qt Edition]");
     {
-        QIcon appIcon { QStringLiteral(":/shijima-qt.ico") };
+        QIcon appIcon { QStringLiteral(":/neurolingsce.ico") };
         if (appIcon.isNull()) {
-            appIcon = QIcon { QStringLiteral(":/shijima-qt.png") };
+            appIcon = QIcon { QStringLiteral(":/neurolingsce.png") };
         }
         if (!appIcon.isNull()) {
             app.setWindowIcon(appIcon);
