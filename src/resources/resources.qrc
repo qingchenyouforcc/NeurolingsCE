@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="neurolingsce.ico">../packaging/neurolingsce.ico</file>
+        <file alias="neurolingsce.png">../packaging/io.github.qingchenyouforcc.NeurolingsCE.png</file>
+    </qresource>
+</RCC>
