@@ -166,6 +166,8 @@ Please join the NeuroSama Bar group~
 
 **NeuroSama Bar QQ Group: 734688012**
 
+**EvilNeuro Bar QQ Group: 1072864404**
+
 ---
 
 ## Star History
