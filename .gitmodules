@@ -7,3 +7,6 @@
 [submodule "cpp-httplib"]
 	path = cpp-httplib
 	url = https://github.com/yhirose/cpp-httplib
+[submodule "ElaWidgetTools"]
+	path = ElaWidgetTools
+	url = https://github.com/Liniyous/ElaWidgetTools.git

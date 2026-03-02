@@ -81,6 +81,20 @@ if(MSVC AND TARGET shijima)
   set_property(TARGET shijima PROPERTY MSVC_RUNTIME_LIBRARY "${_shijima_msvc_runtime}")
 endif()
 
+# ElaWidgetTools (Fluent Design UI components)
+# We add_subdirectory the inner library directly (ElaWidgetTools/ElaWidgetTools/)
+# to skip the top-level CMake which has a Qt version gate and hardcoded QT_SDK_DIR.
+# ElaWidgetTools expects QT_VERSION_MAJOR to be set (normally done by find_package(QT NAMES ...)).
+if(NOT DEFINED QT_VERSION_MAJOR)
+  set(QT_VERSION_MAJOR ${Qt6_VERSION_MAJOR})
+endif()
+# Build as static lib to avoid DLL deployment complexity
+set(ELAWIDGETTOOLS_BUILD_STATIC_LIB ON CACHE BOOL "Build ElaWidgetTools as static library" FORCE)
+add_subdirectory(ElaWidgetTools/ElaWidgetTools)
+if(MSVC AND TARGET ElaWidgetTools)
+  set_property(TARGET ElaWidgetTools PROPERTY MSVC_RUNTIME_LIBRARY "${_shijima_msvc_runtime}")
+endif()
+
 # libshimejifinder's upstream CMake uses bash scripts and Unix headers in some files.
 # For MSVC builds we build it as an external dependency later, or you can use a
 # prebuilt libshimejifinder and point CMake to it.
@@ -255,6 +269,7 @@ target_link_libraries(NeurolingsCE PRIVATE
   Qt6::Widgets
   Qt6::Concurrent
   shijima
+  ElaWidgetTools
 )
 
 
