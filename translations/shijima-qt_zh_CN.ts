@@ -228,11 +228,11 @@
     </message>
     <message>
         <source>Dismiss all</source>
-        <translation>全部解散</translation>
+        <translation>全部清除</translation>
     </message>
     <message>
         <source>Dismiss</source>
-        <translation>解散</translation>
+        <translation>关闭</translation>
     </message>
 </context>
 <context>
