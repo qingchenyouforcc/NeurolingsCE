@@ -1172,7 +1172,6 @@ void ShijimaManager::updateEnvironment(QScreen *screen) {
     int x = cursor.x(), y = cursor.y();
     env->cursor = { (double)x, (double)y, x - env->cursor.x, y - env->cursor.y };
     env->subtick_count = SHIJIMAQT_SUBTICK_COUNT;
-    m_previousWindow = m_currentWindow;
 
     env->set_scale(1.0 / std::sqrt(m_userScale));
 }
@@ -1187,6 +1186,7 @@ void ShijimaManager::updateEnvironment() {
             updateEnvironment(screen);
         }
     }
+    m_previousWindow = m_currentWindow;
 }
 
 void ShijimaManager::askClose() {
