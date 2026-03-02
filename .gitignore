@@ -1,89 +1,181 @@
-*
-!/.github/
-!/.github/workflows/
-!/.github/workflows/*.yaml
-!/.github/ISSUE_TEMPLATE/
-!/.github/ISSUE_TEMPLATE/*.yml
-!/.gitignore
-!/.gitmodules
-!/**/*.cc
-!/**/*.hpp
-!/CMakeLists.txt
-!/.gitattributes
-!/src/packaging/NeurolingsCE.app/
-!/src/packaging/NeurolingsCE.app/Contents/
-!/src/packaging/NeurolingsCE.app/Contents/Resources/
-!/src/packaging/NeurolingsCE.app/Contents/Resources/AppIcon.icns
-!/src/packaging/NeurolingsCE.app/Contents/Info.plist
-!/Makefile
-!/common.mk
-!/dev-docker/
-!/dev-docker/Dockerfile
-!/src/platform/Platform/
-!/src/platform/Platform/*.hpp
-!/src/platform/Platform/Makefile
-!/src/platform/Platform/Linux/
-!/src/platform/Platform/Linux/*.cc
-!/src/platform/Platform/Linux/*.hpp
-!/src/platform/Platform/Linux/kwin_script.js
-!/src/platform/Platform/Linux/gnome_script/
-!/src/platform/Platform/Linux/gnome_script/extension.js
-!/src/platform/Platform/Linux/gnome_script/metadata.json
-!/src/platform/Platform/Linux/Makefile
-!/src/platform/Platform/Linux/*.cc
-!/src/platform/Platform/Linux/*.hpp
-!/src/platform/Platform/macOS/
-!/src/platform/Platform/macOS/Makefile
-!/src/platform/Platform/macOS/*.cc
-!/src/platform/Platform/macOS/*.mm
-!/src/platform/Platform/macOS/*.hpp
-!/src/platform/Platform/Stub/
-!/src/platform/Platform/Stub/Makefile
-!/src/platform/Platform/Stub/*.cc
-!/src/platform/Platform/Stub/*.hpp
-!/src/platform/Platform/Windows/
-!/src/platform/Platform/Windows/Makefile
-!/src/platform/Platform/Windows/*.cc
-!/src/platform/Platform/Windows/*.hpp
-!/src/tools/find_dlls.sh
-!/src/packaging/io.github.qingchenyouforcc.NeurolingsCE.png
-!/src/packaging/neurolingsce.ico
-!/src/packaging/io.github.qingchenyouforcc.NeurolingsCE.desktop
-!/src/packaging/io.github.qingchenyouforcc.NeurolingsCE.metainfo.xml
-!/src/resources/resources.rc
-!/cmake/
-!/cmake/*.cmake
-!/src/app/
-!/src/app/*.cc
-!/include/
-!/include/shijima-qt/
-!/include/shijima-qt/*.hpp
-!/libshimejifinder
-!/libshijima
-!/README.md
-!/licenses/
-!/README_EN.md
-!/licenses/*.rst
-!/licenses/*.txt
-licenses_generated.hpp
+# =============================================================================
+# NeurolingsCE .gitignore
+# Blacklist approach: only list what to ignore.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Build directories
+# -----------------------------------------------------------------------------
+build/
+Build/
+cmake-build-*/
+out/
+_build/
+publish/
+AppDir/
+
+# -----------------------------------------------------------------------------
+# CMake generated files
+# -----------------------------------------------------------------------------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+compile_commands.json
+_deps/
+CMakeUserPresets.json
+*_autogen/
+
+# -----------------------------------------------------------------------------
+# Make build artifacts (generated at project root by Makefile)
+# -----------------------------------------------------------------------------
 DefaultMascot.cc
-!/src/tools/bundle-default.sh
-!/src/assets/DefaultMascot/
-!/src/assets/DefaultMascot/actions.xml
-!/src/assets/DefaultMascot/behaviors.xml
-!/src/assets/DefaultMascot/img/
-!/src/assets/DefaultMascot/img/shime*.png
-!/cpp-httplib
-!/src/docs/HTTP-API.md
-!/LICENSE
-!/Shijima-Qt_README.md
-!/.images/
-!/.images/*.jpg
-!/.images/*.png
-!/CMakeSettings.json
-!/translations/
-!/translations/*.ts
-!/src/resources/
-!/src/resources/*.qrc
-!/src/platform/Platform/AGENTS.md
-!/AGENTS.md
+licenses_generated.hpp
+qrc_*.cc
+*.qm
+shijima-qt
+shijima-qt.exe
+shijima-qt.a
+*.AppImage
+
+# -----------------------------------------------------------------------------
+# C/C++ object files & dependencies
+# -----------------------------------------------------------------------------
+*.o
+*.obj
+*.d
+*.lo
+*.slo
+*.gch
+*.pch
+
+# Libraries (compiled)
+*.a
+*.lib
+*.la
+*.lai
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+
+# Linker & debug
+*.ilk
+*.pdb
+*.idb
+*.dwo
+*.exp
+
+# -----------------------------------------------------------------------------
+# Ninja
+# -----------------------------------------------------------------------------
+build.ninja
+.ninja_deps
+.ninja_log
+
+# -----------------------------------------------------------------------------
+# Visual Studio / MSVC
+# -----------------------------------------------------------------------------
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.aps
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+*.iobj
+*.ipdb
+*.tlog
+
+# -----------------------------------------------------------------------------
+# Qt Creator
+# -----------------------------------------------------------------------------
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.autosave
+CMakeLists.txt.user*
+.qmake.cache
+.qmake.stash
+.qt/
+.qtc/
+.qtc_clangd/
+
+# -----------------------------------------------------------------------------
+# JetBrains CLion
+# -----------------------------------------------------------------------------
+.idea/
+
+# -----------------------------------------------------------------------------
+# VS Code (keep settings if shared; ignore the rest)
+# -----------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# -----------------------------------------------------------------------------
+# macOS
+# -----------------------------------------------------------------------------
+.DS_Store
+__MACOSX/
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# -----------------------------------------------------------------------------
+# Windows
+# -----------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# -----------------------------------------------------------------------------
+# Linux
+# -----------------------------------------------------------------------------
+*~
+.directory
+.Trash-*
+.nfs*
+nohup.out
+
+# -----------------------------------------------------------------------------
+# Temporary & editor files
+# -----------------------------------------------------------------------------
+*.tmp
+*.log
+*.bak
+*.swp
+*.swo
+*.orig
+\#*\#
+.#*
+
+# -----------------------------------------------------------------------------
+# Package managers
+# -----------------------------------------------------------------------------
+vcpkg_installed/
+.cache/
+
+# -----------------------------------------------------------------------------
+# Submodule build artifacts (generated inside submodule dirs by Make)
+# -----------------------------------------------------------------------------
+libshijima/build/
+libshimejifinder/build/
