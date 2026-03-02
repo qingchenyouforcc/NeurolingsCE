@@ -22,6 +22,7 @@
 #include <string>
 #include <QLabel>
 #include <QPoint>
+#include "ElaTheme.h"
 
 static std::string doubleToString(double val) {
     auto str = std::to_string(val);
@@ -72,6 +73,8 @@ ShimejiInspectorDialog::ShimejiInspectorDialog(ShijimaWidget *parent):
         Qt::WindowCloseButtonHint) &
         ~(Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint));
     setWindowTitle(tr("Inspector — %1").arg(parent->mascotName()));
+    setStyleSheet(QString("QDialog { background-color: %1; }")
+        .arg(ElaThemeColor(eTheme->getThemeMode(), DialogBase).name()));
     setLayout(m_formLayout);
     m_formLayout->setFormAlignment(Qt::AlignLeft);
     m_formLayout->setLabelAlignment(Qt::AlignRight);
@@ -113,13 +116,18 @@ ShimejiInspectorDialog::ShimejiInspectorDialog(ShijimaWidget *parent):
 void ShimejiInspectorDialog::addRow(QString const& label,
     std::function<std::string(shijima::mascot::manager &)> tick)
 {
+    auto themeMode = eTheme->getThemeMode();
+    QString primaryColor = ElaThemeColor(themeMode, PrimaryNormal).name();
+    QString textColor = ElaThemeColor(themeMode, BasicText).name();
+    QString baseBg = ElaThemeColor(themeMode, BasicBase).name();
+
     auto labelWidget = new QLabel { label };
-    labelWidget->setStyleSheet("font-weight: bold; color: #5c6bc0;");
+    labelWidget->setStyleSheet(QString("font-weight: bold; color: %1;").arg(primaryColor));
     auto dataWidget = new QLabel {};
     dataWidget->setStyleSheet(
-        "font-family: 'Consolas', 'Cascadia Mono', 'Source Code Pro', monospace;"
-        "color: #3c4043; padding: 2px 4px;"
-        "background-color: #f5f6fa; border-radius: 3px;");
+        QString("font-family: 'Consolas', 'Cascadia Mono', 'Source Code Pro', monospace;"
+        "color: %1; padding: 2px 4px;"
+        "background-color: %2; border-radius: 3px;").arg(textColor, baseBg));
     m_tickCallbacks.push_back([this, dataWidget, tick](){
         auto newText = tick(shijimaParent()->mascot());
         dataWidget->setText(QString::fromStdString(newText));

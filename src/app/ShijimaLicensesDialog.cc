@@ -21,6 +21,7 @@
 #include <QWidget>
 #include "licenses_generated.hpp"
 #include <QMargins>
+#include "ElaTheme.h"
 
 ShijimaLicensesDialog::ShijimaLicensesDialog(QWidget *parent): QDialog(parent) {
     auto windowLayout = new QVBoxLayout { this };
@@ -33,4 +34,14 @@ ShijimaLicensesDialog::ShijimaLicensesDialog(QWidget *parent): QDialog(parent) {
     setLayout(windowLayout);
     windowLayout->setContentsMargins(QMargins {});
     windowLayout->addWidget(&m_textEdit);
+
+    // Theme-aware styling
+    auto themeMode = eTheme->getThemeMode();
+    QString dialogBg = ElaThemeColor(themeMode, DialogBase).name();
+    QString textColor = ElaThemeColor(themeMode, BasicText).name();
+    QString baseBg = ElaThemeColor(themeMode, BasicBase).name();
+    setStyleSheet(QString("QDialog { background-color: %1; }").arg(dialogBg));
+    m_textEdit.setStyleSheet(QString(
+        "QTextEdit { background-color: %1; color: %2; border: none; }"
+    ).arg(baseBg, textColor));
 }
