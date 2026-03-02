@@ -27,6 +27,7 @@
 #include "shijima-qt/AssetLoader.hpp"
 #include "shijima-qt/cli.hpp"
 #include <httplib.h>
+#include <QFile>
 
 int main(int argc, char **argv) {
     if (argc > 1) {
@@ -46,6 +47,14 @@ int main(int argc, char **argv) {
         }
         if (!appIcon.isNull()) {
             app.setWindowIcon(appIcon);
+        }
+    }
+    // Load global stylesheet
+    {
+        QFile styleFile(QStringLiteral(":/style.qss"));
+        if (styleFile.open(QFile::ReadOnly | QFile::Text)) {
+            app.setStyleSheet(QString::fromUtf8(styleFile.readAll()));
+            styleFile.close();
         }
     }
     try {
