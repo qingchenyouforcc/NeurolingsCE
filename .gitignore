@@ -180,3 +180,4 @@ vcpkg_installed/
 libshijima/build/
 libshimejifinder/build/
 /nul
+/src/platform/Platform/AGENTS.md
