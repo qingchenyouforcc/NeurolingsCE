@@ -815,7 +815,7 @@ void ShijimaManager::setupNavigation() {
         // Links row
         QHBoxLayout *linksRow = new QHBoxLayout;
         linksRow->addStretch();
-        auto *btnWeb = new QPushButton(tr("Website"));
+        auto *btnWeb = new QPushButton(tr("Shijima Website"));
         btnWeb->setStyleSheet(buttonStyle);
         connect(btnWeb, &QPushButton::clicked, [](){
             QDesktopServices::openUrl(QUrl { "https://getshijima.app" });
@@ -950,7 +950,7 @@ void ShijimaManager::showEvent(QShowEvent *event) {
     else {
         if (m_loadedMascots.size() == 1) {
             auto msgBox = new QMessageBox { this };
-            msgBox->setText(tr("Welcome to Shijima! Get started by dragging and dropping a "
+            msgBox->setText(tr("Welcome to NeurolingsCE! Get started by dragging and dropping a "
                 "shimeji archive to the manager window. You can also import archives "
                 "by selecting File > Import."));
             msgBox->addButton(QMessageBox::StandardButton::Ok);
@@ -1392,11 +1392,11 @@ void ShijimaManager::updateEnvironment() {
 void ShijimaManager::askClose() {
     setManagerVisible(true);
     QMessageBox msgBox { this };
-    msgBox.setWindowTitle(tr("Close Shijima-Qt"));
+    msgBox.setWindowTitle(tr("Close NeurolingsCE"));
     msgBox.setIcon(QMessageBox::Icon::Question);
     msgBox.setStandardButtons(QMessageBox::StandardButton::Yes |
         QMessageBox::StandardButton::No);
-    msgBox.setText(tr("Do you want to close Shijima-Qt?"));
+    msgBox.setText(tr("Do you want to close NeurolingsCE?"));
     int ret = msgBox.exec();
     if (ret == QMessageBox::Button::Yes) {
         #if defined(__APPLE__)

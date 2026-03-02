@@ -101,7 +101,7 @@
     </message>
     <message>
         <source>Detach Speed</source>
-        <translation>窗口脱离速度</translation>
+        <translation>脱离速度</translation>
     </message>
     <message>
         <source>Threshold (px/tick):</source>
@@ -146,7 +146,7 @@
     </message>
     <message>
         <source>Shijima Website</source>
-        <translation>Shijima网站</translation>
+        <translation>Shijima 网站</translation>
     </message>
     <message>
         <source>Report Issue</source>
