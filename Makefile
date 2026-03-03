@@ -200,7 +200,7 @@ ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a: ElaWidgetTools/build/Ma
 	$(MAKE) -C ElaWidgetTools/build
 
 clean::
-    rm -rf publish/$(PLATFORM)/$(CONFIG) libshijima/build libshimejifinder/build ElaWidgetTools/build
+   rm -rf publish/$(PLATFORM)/$(CONFIG) libshijima/build libshimejifinder/build ElaWidgetTools/build
 	rm -f $(OBJECTS) shijima-qt.a shijima-qt$(EXE) NeurolingsCE.AppImage qrc_resources.cc qrc_i18n.cc $(QM_FILES)
 	$(MAKE) -C src/platform/Platform clean
 
