@@ -31,11 +31,11 @@
     <!-- Window title and status bar -->
     <message>
         <source>NeurolingsCE — Mascot Manager</source>
-        <translation>NeurolingsCE — 看板娘管理器</translation>
+        <translation>NeurolingsCE — 桌宠管理器</translation>
     </message>
     <message>
         <source>  Mascots: %1  |  Templates: %2</source>
-        <translation>  当前看板娘数量: %1  |  看板娘模板数: %2</translation>
+        <translation>  当前桌宠数量: %1  |  桌宠模板数: %2</translation>
     </message>
     <!-- Home page -->
     <message>
@@ -65,7 +65,7 @@
     </message>
     <message>
         <source>Multiplication</source>
-        <translation>允许看板娘创建分身</translation>
+        <translation>允许桌宠创建分身</translation>
     </message>
     <message>
         <source>Windowed Mode</source>
@@ -107,6 +107,14 @@
         <source>Threshold (px/tick):</source>
         <translation>阈值 (像素/帧):</translation>
     </message>
+    <message>
+        <source>Speech Bubble</source>
+        <translation>气泡消息</translation>
+    </message>
+    <message>
+        <source>Speech Bubble Click Count</source>
+        <translation>气泡触发点击次数</translation>
+    </message>
     <!-- About page -->
     <message>
         <source>About</source>
@@ -118,7 +126,7 @@
     </message>
     <message>
         <source>A cross-platform shimeji desktop pet runner.</source>
-        <translation>跨平台桌面看板娘应用。</translation>
+        <translation>跨平台桌面桌宠应用。</translation>
     </message>
     <message>
         <source>Author</source>
@@ -159,15 +167,15 @@
     <!-- Dialogs -->
     <message>
         <source>Delete shimeji</source>
-        <translation>删除看板娘</translation>
+        <translation>删除桌宠</translation>
     </message>
     <message>
         <source>Choose shimeji archive...</source>
-        <translation>选择看板娘压缩包...</translation>
+        <translation>选择桌宠压缩包...</translation>
     </message>
     <message>
         <source>Are you sure you want to delete these shimeji?</source>
-        <translation>确定要删除这些看板娘吗？</translation>
+        <translation>确定要删除这些桌宠吗？</translation>
     </message>
     <message>
         <source>
@@ -181,21 +189,21 @@
     </message>
     <message>
         <source>Importing shimeji...</source>
-        <translation>正在导入看板娘...</translation>
+        <translation>正在导入桌宠...</translation>
     </message>
     <message numerus="yes">
         <source>Imported %n mascot(s).</source>
         <translation>
-            <numerusform>已导入 %n 个看板娘。</numerusform>
+            <numerusform>已导入 %n 个桌宠。</numerusform>
         </translation>
     </message>
     <message>
         <source>Could not import any mascots from the specified archive(s).</source>
-        <translation>无法从指定的压缩包中导入任何看板娘。</translation>
+        <translation>无法从指定的压缩包中导入任何桌宠。</translation>
     </message>
     <message>
         <source>Welcome to NeurolingsCE! Get started by dragging and dropping a shimeji archive to the manager window. You can also import archives by selecting File &gt; Import.</source>
-        <translation>欢迎使用 NeurolingsCE！将看板娘压缩包拖放到管理器窗口即可开始。您也可以通过选择 文件 &gt; 导入 来导入压缩包。</translation>
+        <translation>欢迎使用 NeurolingsCE！将桌宠压缩包拖放到管理器窗口即可开始。您也可以通过选择 文件 &gt; 导入 来导入压缩包。</translation>
     </message>
     <message>
         <source>Close NeurolingsCE</source>
