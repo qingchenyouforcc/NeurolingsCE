@@ -21,6 +21,8 @@ Built with C++17 / Qt6, supporting Windows, Linux, and macOS.
 
 ## Download
 
+Neurolings Core is the release version of this project, while Neurolings is the one-click installation package for this project.
+
 - [Latest Release](https://github.com/qingchenyouforcc/NeurolingsCE/releases/latest)
 - [All Releases](https://github.com/qingchenyouforcc/NeurolingsCE/releases)
 
@@ -122,6 +124,8 @@ NeurolingsCE/
 ## Credits
 
 This project is based on [Shijima-Qt](https://github.com/pixelomer/Shijima-Qt) by [pixelomer](https://github.com/pixelomer), with extensive modifications and feature enhancements.
+
+This project was originally created as a migration version for "[Neurolings](https://x.com/Monikaphobia/status/1844272129619132682?s=20)", but is now being transformed into a general-purpose Shimeji desktop pet core manager program.
 
 Core dependencies:
 - [libshijima](https://github.com/pixelomer/libshijima) — Mascot simulation engine
