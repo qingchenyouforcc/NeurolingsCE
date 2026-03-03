@@ -17,9 +17,9 @@ jobs:
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
-          git fetch --unshallow origin $BRANCH_NAME
+          git fetch --unshallow origin $BRANCH_NAME || true
           pushd libshijima
-          git fetch --unshallow origin main
+          git fetch --unshallow origin main || true
           echo "libshijima: $(git rev-list HEAD --count) commits"
           popd
       - name: Cache Docker image
@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: shijima-qt-dev.tar.gz
-          key: docker-fedora-42-qt6-mingw
+          key: docker-fedora-42-qt6-mingw-${{ hashFiles('dev-docker/Dockerfile') }}
       - name: Build Docker image
         if: steps.cache-docker.outputs.cache-hit != 'true'
         run: |
@@ -62,9 +62,9 @@ jobs:
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
-          git fetch --unshallow origin $BRANCH_NAME
+          git fetch --unshallow origin $BRANCH_NAME || true
           pushd libshijima
-          git fetch --unshallow origin main
+          git fetch --unshallow origin main || true
           echo "libshijima: $(git rev-list HEAD --count) commits"
           popd
       - uses: actions/setup-node@v4
@@ -107,9 +107,9 @@ jobs:
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
-          git fetch --unshallow origin $BRANCH_NAME
+          git fetch --unshallow origin $BRANCH_NAME || true
           pushd libshijima
-          git fetch --unshallow origin main
+          git fetch --unshallow origin main || true
           echo "libshijima: $(git rev-list HEAD --count) commits"
           popd
       - name: Temporarily let gtar run as root
