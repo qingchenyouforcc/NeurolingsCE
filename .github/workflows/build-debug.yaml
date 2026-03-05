@@ -117,6 +117,8 @@ jobs:
           # Add Qt private headers for ElaWidgetTools
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
           make licenses_generated.hpp
+          # Copy licenses header to include directory so compiler can find it
+          cp licenses_generated.hpp include/
           make -j$(nproc)
       - name: Archive Linux debug build
         uses: actions/upload-artifact@v4
