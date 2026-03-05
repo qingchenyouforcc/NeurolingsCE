@@ -106,7 +106,7 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
           make licenses_generated.hpp
           cp licenses_generated.hpp include/
           echo "Environment prepared"
@@ -121,7 +121,7 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
           make -j2 src/platform/Platform/Platform.a libshijima/build/libshijima.a libshimejifinder/build/libshimejifinder.a ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
       - name: Build main application
         env:
@@ -134,7 +134,7 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
           make -j2 shijima-qt
       - name: Create AppImage and package
         env:
