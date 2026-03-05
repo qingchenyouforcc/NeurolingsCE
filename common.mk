@@ -14,8 +14,8 @@ PKG_CONFIG ?= pkg-config
 WINDRES ?= $(patsubst %-windres,%-gcc,$(CC))
 AR ?= ar
 CMAKE ?= cmake
-RCC ?= rcc
-LRELEASE ?= lrelease
+RCC ?= $(shell pkg-config Qt$(QT_VERSION)Core --variable=rcc 2>/dev/null || echo rcc)
+LRELEASE ?= $(shell pkg-config Qt$(QT_VERSION)Core --variable=lrelease 2>/dev/null || echo lrelease)
 
 MOC ?= $(shell pkg-config Qt$(QT_VERSION)Core --variable=moc 2>/dev/null || echo moc)
 PLATFORM :=
@@ -191,7 +191,7 @@ FORCE: ;
 # Generate .moc files in src/app from headers in include/shijima-qt/
 # Source files include these with #include "ClassName.moc"
 src/app/%.moc: include/shijima-qt/%.hpp
-	$(MOC) $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(MOC) $(CPPFLAGS) -Iinclude $< -o $@
 
 # Ensure moc files are generated before compiling objects that need them
 src/app/ShijimaManager.o: src/app/ShijimaManager.moc

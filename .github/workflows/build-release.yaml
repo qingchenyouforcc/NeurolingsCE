@@ -86,6 +86,7 @@ jobs:
       - name: Build Linux release build
         env:
           CONFIG: release
+          PKG_CONFIG_PATH: ${{ runner.workspace }}/Qt/6.8.2/gcc_64/lib/pkgconfig:${{ env.PKG_CONFIG_PATH }}
         run: |
           make clean
           make -j$(nproc)
