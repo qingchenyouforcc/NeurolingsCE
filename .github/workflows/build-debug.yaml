@@ -94,6 +94,13 @@ jobs:
           cache: true
       - name: Install build dependencies
         run: |
+          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev ccache
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.runner }}-qt6
+          max-size: 500M
+        run: |
           sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev
       - name: Debug Qt installation
         env:
@@ -112,13 +119,15 @@ jobs:
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
+          echo "ccache stats before:"
+          ccache -s
           make licenses_generated.hpp
           cp licenses_generated.hpp include/
           echo "Environment prepared"
@@ -126,56 +135,75 @@ jobs:
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
-          make -j2 src/platform/Platform/Platform.a
-      - name: Build libshijima
-        env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
-        run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
-          make -j2 libshijima/build/libshijima.a
-      - name: Build libshimejifinder
-        env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
-        run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
-          make -j2 libshimejifinder/build/libshimejifinder.a
-      - name: Build ElaWidgetTools
-        env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
-        run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
-          make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+          echo "::group::Building Platform library"
+          time make -j4 src/platform/Platform/Platform.a
+          echo "::endgroup::"
+      - name: Build libshijima
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
+          echo "::group::Building libshijima"
+          time make -j4 libshijima/build/libshijima.a
+          echo "::endgroup::"
+      - name: Build libshimejifinder
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
+          echo "::group::Building libshimejifinder"
+          time make -j4 libshimejifinder/build/libshimejifinder.a
+          echo "::endgroup::"
+      - name: Build ElaWidgetTools
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
+          echo "::group::Building ElaWidgetTools"
+          time make -j4 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+          echo "::endgroup::"
       - name: Build main application
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
-          make -j2 src/platform/Platform/Platform.a libshijima/build/libshijima.a libshimejifinder/build/libshimejifinder.a ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
-      - name: Build main application
-        env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
-        run: |
-          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
-          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
-          export MOC="$QT_DIR/libexec/moc"
-          export RCC="$QT_DIR/libexec/rcc"
-          export LRELEASE="$QT_DIR/bin/lrelease"
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
-          make -j2 shijima-qt
+          echo "::group::Building main application"
+          time make -j4 shijima-qt
+          echo "::endgroup::"
+          echo ""
+          echo "ccache stats after build:"
+          ccache -s
       - name: Archive Linux debug build
         uses: actions/upload-artifact@v4
         with:
