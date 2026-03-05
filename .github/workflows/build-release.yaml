@@ -88,22 +88,28 @@ jobs:
           arch: ${{ (matrix.runner == 'ubuntu-24.04-arm') && 'linux_gcc_arm64' || 'linux_gcc_64' }}
           modules: 'qtmultimedia'
           cache: true
+      - name: Install Qt6 sources (private headers)
+      - name: Install Qt6 sources (private headers)
+        run: |
+          QT_DIR="${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}"
+          mkdir -p $QT_DIR/include/QtWidgets/private
+          mkdir -p $QT_DIR/include/QtCore/private
+          cd /tmp
+          echo "Downloading Qt 6.8.2 source code..."
+          wget -q --timeout=120 https://download.qt.io/archive/qt/6.8/6.8.2/submodules/qtbase-everywhere-src-6.8.2.tar.xz
+          echo "Source downloaded, extracting private headers..."
+          # Extract and copy private headers
+          tar -tf qtbase-everywhere-src-6.8.2.tar.xz | grep 'src/widgets.*_p\.h' | head -5
+          tar -xf qtbase-everywhere-src-6.8.2.tar.xz
+          echo "Copying private headers..."
+          find qtbase-everywhere-src-6.8.2/src/widgets -name '*_p.h' -exec cp {} $QT_DIR/include/QtWidgets/private/ \; 2>/dev/null || true
+          find qtbase-everywhere-src-6.8.2/src/corelib -name '*_p.h' -exec cp {} $QT_DIR/include/QtCore/private/ \; 2>/dev/null || true
+          echo "Private headers installed:"
+          ls -la $QT_DIR/include/QtWidgets/private/ | head -10 || echo "No private headers found!"
+      - name: Install build dependencies
       - name: Install build dependencies
         run: |
-          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev ccache
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ matrix.runner }}-qt6-release
-          max-size: 500M
-      - name: Debug Qt private headers
-        run: |
-          echo "=== Looking for Qt private headers ==="
-          dpkg -L qt6-base-private-dev | grep -E '\.h$' | head -20 || echo "qt6-base-private-dev not found"
-          echo ""
-          echo "=== Checking common paths ==="
-          ls -la /usr/include/x86_64-linux-gnu/qt6/QtWidgets/ 2>/dev/null || echo "QtWidgets dir not found"
-          find /usr/include -name 'qtabbar_p.h' 2>/dev/null || echo "qtabbar_p.h not found"
+          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols ccache
       - name: Install build dependencies (arm64)
         if: matrix.runner == 'ubuntu-24.04-arm'
         run: |
@@ -182,21 +188,28 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          # Find and set correct Qt private headers path
-          PRIVATE_HEADERS_PATH=$(find /usr/include -name 'qtabbar_p.h' -path '*/QtWidgets/*' 2>/dev/null | head -1 | xargs dirname)
-          if [ -z "$PRIVATE_HEADERS_PATH" ]; then
-            echo "Warning: Qt private headers not found, trying default paths"
-            PRIVATE_HEADERS_PATH="/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2/QtWidgets/private"
-          fi
-          echo "Using private headers path: $PRIVATE_HEADERS_PATH"
-          PRIVATE_CORE_PATH="/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2/QtCore/private"
-          export CXXFLAGS="$CXXFLAGS -I$PRIVATE_HEADERS_PATH -I$PRIVATE_CORE_PATH"
-          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I$PRIVATE_CORE_PATH"
+          # Debug: Find Qt private headers
+          echo "=== Searching for qtabbar_p.h ==="
+          find /usr -name 'qtabbar_p.h' 2>/dev/null
+          find $QT_DIR -name 'qtabbar_p.h' 2>/dev/null || echo "Not found in QT_DIR"
+          echo ""
+          # Use Qt 6.8.2 private headers from Qt installation
+          PRIVATE_HEADERS_PARENT="$QT_DIR/include/QtWidgets"
+          PRIVATE_CORE_PARENT="$QT_DIR/include/QtCore"
+          echo "Using Qt 6.8.2 private headers from: $PRIVATE_HEADERS_PARENT"
+          echo "Listing QtWidgets/private directory:"
+          ls -la "$PRIVATE_HEADERS_PARENT/private/" 2>/dev/null || echo "WARNING: QtWidgets/private not found!"
+          # Set include flags
+          export CXXFLAGS="$CXXFLAGS -I$PRIVATE_HEADERS_PARENT -I$PRIVATE_CORE_PARENT"
+          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=\"-I$PRIVATE_HEADERS_PARENT -I$PRIVATE_CORE_PARENT\""
+          echo "CXXFLAGS: $CXXFLAGS"
+          echo "CMAKEFLAGS: $CMAKEFLAGS"
           echo "::group::Building ElaWidgetTools"
-          # Clean CMake cache to force reconfiguration with new flags
-          rm -f ElaWidgetTools/build/CMakeCache.txt
-          # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
+          rm -rf ElaWidgetTools/build
+          # Also patch ElaWidgetTools CMakeLists.txt as a backup
+          sed -i '1i include_directories('"$PRIVATE_HEADERS_PARENT"' '"$PRIVATE_CORE_PARENT"')' ElaWidgetTools/ElaWidgetTools/CMakeLists.txt
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+          cat ElaWidgetTools/ElaWidgetTools/CMakeLists.txt | head -5
           echo "::endgroup::"
       - name: Build main application
         timeout-minutes: 30
