@@ -97,6 +97,10 @@ jobs:
         run: |
           export PATH="$QT_DIR/bin:$PATH"
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          # Explicitly set Qt tool paths to ensure they're found
+          export MOC="$QT_DIR/bin/moc"
+          export RCC="$QT_DIR/bin/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
           make clean
           make -j$(nproc)
           make appimage
