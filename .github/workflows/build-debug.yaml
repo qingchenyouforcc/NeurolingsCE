@@ -85,7 +85,7 @@ jobs:
           host: ${{ (matrix.runner == 'ubuntu-24.04-arm') && 'linux_arm64' || 'linux' }}
           target: 'desktop'
           arch: ${{ (matrix.runner == 'ubuntu-24.04-arm') && 'linux_gcc_arm64' || 'linux_gcc_64' }}
-          modules: 'qtmultimedia qttools'
+          modules: 'qtmultimedia'
           cache: true
       - name: Install build dependencies
         run: |
