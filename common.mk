@@ -17,6 +17,7 @@ CMAKE ?= cmake
 RCC ?= rcc
 LRELEASE ?= lrelease
 
+MOC ?= $(shell pkg-config Qt$(QT_VERSION)Core --variable=moc 2>/dev/null || echo moc)
 PLATFORM :=
 PLATFORM_CFLAGS :=
 PLATFORM_CXXFLAGS :=
@@ -186,4 +187,12 @@ FORCE: ;
 
 .PHONY: all clean FORCE
 
+# Qt MOC (Meta-Object Compiler) rules
+# Generate .moc files in src/app from headers in include/shijima-qt/
+# Source files include these with #include "ClassName.moc"
+src/app/%.moc: include/shijima-qt/%.hpp
+	$(MOC) $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+
+# Ensure moc files are generated before compiling objects that need them
+src/app/ShijimaManager.o: src/app/ShijimaManager.moc
 -include *.d
