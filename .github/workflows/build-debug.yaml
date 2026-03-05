@@ -106,22 +106,6 @@ jobs:
         with:
           key: linux-qt6
           max-size: 500M
-      - name: Install build dependencies
-        run: |
-          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev ccache
-      - name: Debug Qt private headers
-        run: |
-          echo "=== Looking for Qt private headers ==="
-          dpkg -L qt6-base-private-dev | grep -E '\.h$' | head -20 || echo "qt6-base-private-dev not found"
-          echo ""
-          echo "=== Checking common paths ==="
-          ls -la /usr/include/x86_64-linux-gnu/qt6/QtWidgets/ 2>/dev/null || echo "QtWidgets dir not found"
-          find /usr/include -name 'qtabbar_p.h' 2>/dev/null || echo "qtabbar_p.h not found"
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: linux-qt6
-          max-size: 500M
-      - name: Debug Qt installation
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/gcc_64
         run: |
