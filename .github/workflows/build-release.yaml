@@ -86,8 +86,10 @@ jobs:
       - name: Build Linux release build
         env:
           CONFIG: release
-          PKG_CONFIG_PATH: ${{ runner.workspace }}/Qt/6.8.2/gcc_64/lib/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/gcc_64
         run: |
+          export PATH="$QT_DIR/bin:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           make clean
           make -j$(nproc)
           make appimage
