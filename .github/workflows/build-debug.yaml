@@ -68,7 +68,6 @@ jobs:
         with:
           submodules: 'recursive'
       - name: Fetch full history for Shijima submodules
-      - name: Fetch full history for Shijima submodules
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
