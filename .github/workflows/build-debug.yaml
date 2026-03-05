@@ -210,10 +210,7 @@ jobs:
           echo "CMAKEFLAGS: $CMAKEFLAGS"
           echo "::group::Building ElaWidgetTools"
           rm -rf ElaWidgetTools/build
-          # Also patch ElaWidgetTools CMakeLists.txt as a backup
-          sed -i '1i include_directories('"$PRIVATE_HEADERS_PARENT"' '"$PRIVATE_CORE_PARENT"')' ElaWidgetTools/ElaWidgetTools/CMakeLists.txt
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
-          cat ElaWidgetTools/ElaWidgetTools/CMakeLists.txt | head -5
           echo "::endgroup::"
       - name: Build main application
         timeout-minutes: 30
