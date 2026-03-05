@@ -76,7 +76,7 @@ jobs:
       - name: Install Qt6
         uses: jdpurcell/install-qt-action@v5
         with:
-          use-naqt: true
+          # Note: use-naqt removed because naqt doesn't support qttools module
           version: '6.8.2'
           host: ${{ (matrix.runner == 'ubuntu-24.04-arm') && 'linux_arm64' || 'linux' }}
           target: 'desktop'
