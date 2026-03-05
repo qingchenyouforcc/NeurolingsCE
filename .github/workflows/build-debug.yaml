@@ -107,7 +107,6 @@ jobs:
           max-size: 500M
       - name: Debug Qt installation
         env:
-        env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/gcc_64
         run: |
           echo "=== Qt Directory Structure ==="
