@@ -122,7 +122,37 @@ jobs:
           make licenses_generated.hpp
           cp licenses_generated.hpp include/
           echo "Environment prepared"
-      - name: Build dependencies
+      - name: Build Platform library
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          make -j2 src/platform/Platform/Platform.a
+      - name: Build libshijima
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          make -j2 libshijima/build/libshijima.a
+      - name: Build libshimejifinder
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          make -j2 libshimejifinder/build/libshimejifinder.a
+      - name: Build ElaWidgetTools
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
+          make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+      - name: Build main application
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
