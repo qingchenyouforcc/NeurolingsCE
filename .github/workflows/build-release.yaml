@@ -108,6 +108,9 @@ jobs:
         if: matrix.runner == 'ubuntu-24.04-arm'
         run: |
           sudo apt-get install -y libgstreamer-plugins-bad1.0-0 libgstreamer-plugins-good1.0-0
+        if: matrix.runner == 'ubuntu-24.04-arm'
+        run: |
+          sudo apt-get install -y libgstreamer-plugins-bad1.0-0 libgstreamer-plugins-good1.0-0
         run: |
           echo "=== Looking for Qt private headers ==="
           dpkg -L qt6-base-private-dev | grep -E '\.h$' | head -20 || echo "qt6-base-private-dev not found"
@@ -200,7 +203,7 @@ jobs:
           fi
           echo "Using private headers path: $PRIVATE_HEADERS_PATH"
           export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
-          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
+          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
           echo "::group::Building ElaWidgetTools"
           # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
