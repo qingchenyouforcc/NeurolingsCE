@@ -107,7 +107,7 @@ jobs:
           max-size: 500M
       - name: Debug Qt installation
         env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/gcc_64
+        env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/gcc_64
         run: |
           echo "=== Qt Directory Structure ==="
@@ -194,7 +194,6 @@ jobs:
             echo "Warning: Qt private headers not found, trying default paths"
             PRIVATE_HEADERS_PATH="/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2/QtWidgets/private"
           fi
-          echo "Using private headers path: $PRIVATE_HEADERS_PATH"
           echo "Using private headers path: $PRIVATE_HEADERS_PATH"
           export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
           echo "::group::Building ElaWidgetTools"
