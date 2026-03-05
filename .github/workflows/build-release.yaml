@@ -61,7 +61,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        runner: [ ubuntu-24.04-arm, ubuntu-22.04 ]
+        runner: [ ubuntu-22.04 ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -221,58 +221,4 @@ jobs:
         with:
           name: ${{ (matrix.runner == 'ubuntu-24.04-arm') && 'release-linux-arm64' || 'release-linux-x86_64' }}
           path: publish/Linux/release
-          retention-days: 1
-  build-macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-      - name: Fetch full history for Shijima submodules
-        env:
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-        run: |
-          git fetch --unshallow origin $BRANCH_NAME || true
-          pushd libshijima
-          git fetch --unshallow origin main || true
-          echo "libshijima: $(git rev-list HEAD --count) commits"
-          popd
-      - name: Temporarily let gtar run as root
-        run: |
-          sudo chown 0:0 /opt/homebrew/bin/gtar
-          sudo chmod u+s /opt/homebrew/bin/gtar
-      - name: Cache Qt6
-        id: cache-qt6
-        uses: actions/cache@v4
-        with:
-          path: /opt/local
-          key: macos-14-macports-qt6
-      - name: Revoke gtar's root permissions
-        run: |
-          sudo chmod u-s /opt/homebrew/bin/gtar
-      - name: Install Qt6
-        if: steps.cache-qt6.outputs.cache-hit != 'true'
-        run: |
-          wget --no-verbose https://github.com/macports/macports-base/releases/download/v2.10.5/MacPorts-2.10.5-14-Sonoma.pkg
-          sudo installer -pkg MacPorts-2.10.5-14-Sonoma.pkg -target /
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          yes | sudo port install qt6-qtbase qt6-qtmultimedia pkgconfig libarchive
-          sudo rm -rf /opt/local/var/macports/build/*
-          sudo rm -rf /opt/local/var/macports/distfiles/*
-      - name: Expose MacPorts tools
-        run: |
-          echo "PATH=/opt/local/bin:/opt/local/sbin:$PATH" >> $GITHUB_ENV
-      - name: Build macOS arm64 release build
-        env:
-          CONFIG: release
-        run: |
-          make clean
-          make -j6
-          make macapp
-          cp -r licenses publish/macOS/release/
-      - name: Archive macOS arm64 release build
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-macos-arm64
-          path: publish/macOS/release
           retention-days: 1
