@@ -198,7 +198,6 @@ jobs:
           time make -j2 shijima-qt
           echo "::endgroup::"
       - name: Create AppImage and package
-      - name: Create AppImage and package
         env:
           CONFIG: release
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
