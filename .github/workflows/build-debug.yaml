@@ -90,9 +90,21 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev
+      - name: Debug Qt installation
+        env:
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          echo "=== Qt Directory Structure ==="
+          ls -la $QT_DIR/ || echo "QT_DIR not found"
+          echo ""
+          echo "=== Qt Bin Directory ==="
+          ls -la $QT_DIR/bin/ 2>/dev/null || echo "bin directory not found"
+          echo ""
+          echo "=== Looking for moc ==="
+          find $QT_DIR -name "moc" 2>/dev/null || echo "moc not found in QT_DIR"
+          which moc || echo "moc not in PATH"
       - name: Build Linux debug build
         env:
-          CONFIG: debug
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
           export PATH="$QT_DIR/bin:$PATH"
