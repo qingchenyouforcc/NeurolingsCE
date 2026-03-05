@@ -186,21 +186,9 @@ jobs:
           echo "::group::Building ElaWidgetTools"
           # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
-          echo "::endgroup::
-        env:
-          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
-        run: |
-          export PATH="/usr/lib/ccache:$QT_DIR/bin:$QT_DIR/libexec:$PATH"
-          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
-          export MOC="$QT_DIR/libexec/moc"
-          export RCC="$QT_DIR/libexec/rcc"
-          export LRELEASE="$QT_DIR/bin/lrelease"
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
-          echo "::group::Building ElaWidgetTools"
-          time make -j4 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
           echo "::endgroup::"
       - name: Build main application
+        timeout-minutes: 30
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
         run: |
@@ -212,7 +200,8 @@ jobs:
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
           echo "::group::Building main application"
-          time make -j4 shijima-qt
+          # Use -j2 instead of -j4 to avoid resource exhaustion
+          time make -j2 shijima-qt
           echo "::endgroup::"
           echo ""
           echo "ccache stats after build:"
