@@ -92,19 +92,22 @@ jobs:
         run: |
           QT_DIR="${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}"
           mkdir -p $QT_DIR/include/QtWidgets/private
+          mkdir -p $QT_DIR/include/QtGui/private
           mkdir -p $QT_DIR/include/QtCore/private
           cd /tmp
           echo "Downloading Qt 6.8.2 source code..."
           wget -q --timeout=120 https://download.qt.io/archive/qt/6.8/6.8.2/submodules/qtbase-everywhere-src-6.8.2.tar.xz
           echo "Source downloaded, extracting private headers..."
-          # Extract and copy private headers
-          tar -tf qtbase-everywhere-src-6.8.2.tar.xz | grep 'src/widgets.*_p\.h' | head -5
           tar -xf qtbase-everywhere-src-6.8.2.tar.xz
-          echo "Copying private headers..."
+          echo "Copying private headers (QtWidgets, QtGui, QtCore)..."
           find qtbase-everywhere-src-6.8.2/src/widgets -name '*_p.h' -exec cp {} $QT_DIR/include/QtWidgets/private/ \; 2>/dev/null || true
+          find qtbase-everywhere-src-6.8.2/src/gui -name '*_p.h' -exec cp {} $QT_DIR/include/QtGui/private/ \; 2>/dev/null || true
           find qtbase-everywhere-src-6.8.2/src/corelib -name '*_p.h' -exec cp {} $QT_DIR/include/QtCore/private/ \; 2>/dev/null || true
           echo "Private headers installed:"
-          ls -la $QT_DIR/include/QtWidgets/private/ | head -10 || echo "No private headers found!"
+          echo "  QtWidgets/private: $(ls $QT_DIR/include/QtWidgets/private/ | wc -l) files"
+          echo "  QtGui/private: $(ls $QT_DIR/include/QtGui/private/ | wc -l) files"
+          echo "  QtCore/private: $(ls $QT_DIR/include/QtCore/private/ | wc -l) files"
+          rm -rf qtbase-everywhere-src-6.8.2 qtbase-everywhere-src-6.8.2.tar.xz
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -187,22 +190,6 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          # Debug: Find Qt private headers
-          echo "=== Searching for qtabbar_p.h ==="
-          find /usr -name 'qtabbar_p.h' 2>/dev/null
-          find $QT_DIR -name 'qtabbar_p.h' 2>/dev/null || echo "Not found in QT_DIR"
-          echo ""
-          # Use Qt 6.8.2 private headers from Qt installation
-          PRIVATE_HEADERS_PARENT="$QT_DIR/include/QtWidgets"
-          PRIVATE_CORE_PARENT="$QT_DIR/include/QtCore"
-          echo "Using Qt 6.8.2 private headers from: $PRIVATE_HEADERS_PARENT"
-          echo "Listing QtWidgets/private directory:"
-          ls -la "$PRIVATE_HEADERS_PARENT/private/" 2>/dev/null || echo "WARNING: QtWidgets/private not found!"
-          # Set include flags
-          export CXXFLAGS="$CXXFLAGS -I$PRIVATE_HEADERS_PARENT -I$PRIVATE_CORE_PARENT"
-          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=\"-I$PRIVATE_HEADERS_PARENT -I$PRIVATE_CORE_PARENT\""
-          echo "CXXFLAGS: $CXXFLAGS"
-          echo "CMAKEFLAGS: $CMAKEFLAGS"
           echo "::group::Building ElaWidgetTools"
           rm -rf ElaWidgetTools/build
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a

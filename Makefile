@@ -194,10 +194,6 @@ libshimejifinder/build/libshimejifinder.a: libshimejifinder/build/Makefile
 		libshimejifinder/build/unarr/libunarr.dll; fi
 
 ElaWidgetTools/build/Makefile: ElaWidgetTools/ElaWidgetTools/CMakeLists.txt cmake/ElaWidgetToolsBuild/CMakeLists.txt FORCE
-	# Patch ElaWidgetTools to make WidgetsPrivate optional (not available on all platforms)
-	@if grep -q 'Qt.*WidgetsPrivate' ElaWidgetTools/ElaWidgetTools/CMakeLists.txt 2>/dev/null; then \
-		sed -i 's/Qt\$${QT_VERSION_MAJOR}::WidgetsPrivate//' ElaWidgetTools/ElaWidgetTools/CMakeLists.txt; \
-	fi
 ifeq ($(PLATFORM),Windows)
 	# For MinGW cross-compilation in Docker, override the hardcoded QT_SDK_DIR
 	mkdir -p ElaWidgetTools/build && cd ElaWidgetTools/build && $(CMAKE) $(CMAKEFLAGS) -DQT_SDK_DIR=/usr/x86_64-w64-mingw32/sys-root/mingw -DELAWIDGETTOOLS_BUILD_STATIC_LIB=ON -DELAWIDGETTOOLS_SOURCE_DIR=$(shell pwd)/ElaWidgetTools/ElaWidgetTools ../../cmake/ElaWidgetToolsBuild

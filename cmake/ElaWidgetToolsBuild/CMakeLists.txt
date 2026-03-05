@@ -25,7 +25,32 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 # On others (e.g., Linux with install-qt-action), it may not be available.
 find_package(Qt6 COMPONENTS WidgetsPrivate QUIET)
 if(NOT Qt6WidgetsPrivate_FOUND)
-  message(WARNING "Qt6::WidgetsPrivate not found. ElaWidgetTools may fail to link.")
+  message(WARNING "Qt6::WidgetsPrivate not found. Providing private header include paths manually.")
+  # Create a stand-in INTERFACE target so ElaWidgetTools' target_link_libraries
+  # against Qt6::WidgetsPrivate does not fail.
+  if(NOT TARGET Qt6::WidgetsPrivate)
+    add_library(Qt6::WidgetsPrivate INTERFACE IMPORTED)
+    # Qt private headers include each other using <QtModule/private/header_p.h>,
+    # so we need the Qt include root on the search path.
+    get_target_property(_qt_widgets_inc Qt6::Widgets INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(_dir IN LISTS _qt_widgets_inc)
+      # The Qt include root is the parent of the module-specific include dir.
+      # e.g. /path/to/Qt/6.8.2/gcc_64/include/QtWidgets -> /path/to/Qt/6.8.2/gcc_64/include
+      get_filename_component(_parent "${_dir}" DIRECTORY)
+      if(IS_DIRECTORY "${_parent}/QtWidgets/private")
+        set(_qt_inc_root "${_parent}")
+        break()
+      endif()
+    endforeach()
+    if(DEFINED _qt_inc_root)
+      message(STATUS "Using private headers from: ${_qt_inc_root}")
+      set_target_properties(Qt6::WidgetsPrivate PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_qt_inc_root};${_qt_inc_root}/QtWidgets;${_qt_inc_root}/QtGui;${_qt_inc_root}/QtCore"
+      )
+    else()
+      message(WARNING "Could not locate Qt private header directories.")
+    endif()
+  endif()
 endif()
 # ElaWidgetTools references Qt${QT_VERSION_MAJOR}::Widgets.
 if(NOT DEFINED QT_VERSION_MAJOR)
