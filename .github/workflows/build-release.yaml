@@ -96,7 +96,14 @@ jobs:
         with:
           key: ${{ matrix.runner }}-qt6-release
           max-size: 500M
-      - name: Install build dependencies (arm64)
+      - name: Debug Qt private headers
+        run: |
+          echo "=== Looking for Qt private headers ==="
+          dpkg -L qt6-base-private-dev | grep -E '\.h$' | head -20 || echo "qt6-base-private-dev not found"
+          echo ""
+          echo "=== Checking common paths ==="
+          ls -la /usr/include/x86_64-linux-gnu/qt6/QtWidgets/ 2>/dev/null || echo "QtWidgets dir not found"
+          find /usr/include -name 'qtabbar_p.h' 2>/dev/null || echo "qtabbar_p.h not found"
         if: matrix.runner == 'ubuntu-24.04-arm'
         run: |
           sudo apt-get install -y libgstreamer-plugins-bad1.0-0 libgstreamer-plugins-good1.0-0
@@ -174,7 +181,14 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          # Pass private headers path to CMake via CMAKEFLAGS
+          # Find and set correct Qt private headers path
+          PRIVATE_HEADERS_PATH=$(find /usr/include -name 'qtabbar_p.h' -path '*/QtWidgets/*' 2>/dev/null | head -1 | xargs dirname)
+          if [ -z "$PRIVATE_HEADERS_PATH" ]; then
+            echo "Warning: Qt private headers not found, trying default paths"
+            PRIVATE_HEADERS_PATH="/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2/QtWidgets/private"
+          fi
+          echo "Using private headers path: $PRIVATE_HEADERS_PATH"
+          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
           export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
           echo "::group::Building ElaWidgetTools"
           # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
