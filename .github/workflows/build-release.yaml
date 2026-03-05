@@ -95,7 +95,7 @@ jobs:
         if: matrix.runner == 'ubuntu-24.04-arm'
         run: |
           sudo apt-get install -y libgstreamer-plugins-bad1.0-0 libgstreamer-plugins-good1.0-0
-      - name: Build Linux release build
+      - name: Prepare build environment
         env:
           CONFIG: release
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
@@ -103,16 +103,45 @@ jobs:
           export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
-          # Explicitly set Qt tool paths to ensure they're found
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          # Add Qt private headers for ElaWidgetTools
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
           make licenses_generated.hpp
-          # Copy licenses header to include directory so compiler can find it
           cp licenses_generated.hpp include/
-          make -j2  # 限制并行度，避免资源耗尽
+          echo "Environment prepared"
+      - name: Build dependencies
+        env:
+          CONFIG: release
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          make -j2 src/platform/Platform/Platform.a libshijima/build/libshijima.a libshimejifinder/build/libshimejifinder.a ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+      - name: Build main application
+        env:
+          CONFIG: release
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
+          export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
+          export MOC="$QT_DIR/libexec/moc"
+          export RCC="$QT_DIR/libexec/rcc"
+          export LRELEASE="$QT_DIR/bin/lrelease"
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          make -j2 shijima-qt
+      - name: Create AppImage and package
+        env:
+          CONFIG: release
+          QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
+        run: |
+          export PATH="$QT_DIR/bin:$QT_DIR/libexec:$PATH"
           make appimage
           cp -r licenses publish/Linux/release/
       - name: Archive Linux release build
