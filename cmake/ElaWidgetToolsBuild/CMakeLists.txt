@@ -17,11 +17,16 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Find Qt6 so that Qt6::Widgets and Qt6::WidgetsPrivate targets are available.
+# Find Qt6 so that Qt6::Widgets target is available.
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
-# WidgetsPrivate is needed by ElaWidgetTools for accessing Qt internal APIs
-find_package(Qt6 COMPONENTS WidgetsPrivate REQUIRED)
 
+# WidgetsPrivate is needed by ElaWidgetTools for accessing Qt internal APIs.
+# On some platforms (e.g., MinGW cross-compile), it's required.
+# On others (e.g., Linux with install-qt-action), it may not be available.
+find_package(Qt6 COMPONENTS WidgetsPrivate QUIET)
+if(NOT Qt6WidgetsPrivate_FOUND)
+  message(WARNING "Qt6::WidgetsPrivate not found. ElaWidgetTools may fail to link.")
+endif()
 # ElaWidgetTools references Qt${QT_VERSION_MAJOR}::Widgets.
 if(NOT DEFINED QT_VERSION_MAJOR)
   set(QT_VERSION_MAJOR ${Qt6_VERSION_MAJOR})
