@@ -107,8 +107,8 @@ jobs:
           echo "Private headers installed:"
           ls -la $QT_DIR/include/QtWidgets/private/ | head -10 || echo "No private headers found!"
       - name: Install build dependencies
-      - name: Install build dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols ccache
       - name: Install build dependencies (arm64)
         if: matrix.runner == 'ubuntu-24.04-arm'
