@@ -163,6 +163,7 @@ jobs:
           time make -j4 libshimejifinder/build/libshimejifinder.a
           echo "::endgroup::"
       - name: Build ElaWidgetTools
+        timeout-minutes: 30
         env:
           CONFIG: release
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
@@ -175,9 +176,11 @@ jobs:
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
           echo "::group::Building ElaWidgetTools"
-          time make -j4 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
-          echo "::endgroup::
+          # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
+          time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
+          echo "::endgroup::"
       - name: Build main application
+        timeout-minutes: 30
         env:
           CONFIG: release
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
@@ -190,7 +193,10 @@ jobs:
           export LRELEASE="$QT_DIR/bin/lrelease"
           export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2"
           echo "::group::Building main application"
+          # Use -j2 instead of -j4 to avoid resource exhaustion
+          time make -j2 shijima-qt
           echo "::endgroup::"
+      - name: Create AppImage and package
       - name: Create AppImage and package
         env:
           CONFIG: release
