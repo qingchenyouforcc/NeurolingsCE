@@ -182,10 +182,8 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          # Add Qt private headers path - required for ElaWidgetTools
-          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2/QtWidgets"
-          # Also set CMAKE_CXX_FLAGS for CMake builds
-          export CMAKE_CXX_FLAGS="$CXXFLAGS"
+          # Pass private headers path to CMake via CMAKEFLAGS
+          export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I/usr/include/x86_64-linux-gnu/qt6/QtWidgets/6.8.2 -I/usr/include/x86_64-linux-gnu/qt6/QtCore/6.8.2"
           echo "::group::Building ElaWidgetTools"
           # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
