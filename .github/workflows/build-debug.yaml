@@ -90,8 +90,6 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev
-        run: |
-          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols
       - name: Build Linux debug build
         env:
           CONFIG: debug
