@@ -99,7 +99,7 @@ jobs:
           export PKG_CONFIG_PATH="$QT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           export Qt6_DIR="$QT_DIR/lib/cmake/Qt6"
           # Explicitly set Qt tool paths to ensure they're found
-          export MOC="$QT_DIR/bin/moc"
+          export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/bin/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
           make clean
