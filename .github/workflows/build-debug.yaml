@@ -114,7 +114,9 @@ jobs:
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
           export LRELEASE="$QT_DIR/bin/lrelease"
-          make clean
+          # Add Qt private headers for ElaWidgetTools
+          export CXXFLAGS="$CXXFLAGS -I$QT_DIR/include/QtCore/6.8.2 -I$QT_DIR/include/QtCore/6.8.2/QtCore -I$QT_DIR/include/QtWidgets/6.8.2 -I$QT_DIR/include/QtWidgets/6.8.2/QtWidgets"
+          make licenses_generated.hpp
           make -j$(nproc)
       - name: Archive Linux debug build
         uses: actions/upload-artifact@v4
