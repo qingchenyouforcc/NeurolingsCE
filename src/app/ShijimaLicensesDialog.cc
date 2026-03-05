@@ -45,3 +45,5 @@ ShijimaLicensesDialog::ShijimaLicensesDialog(QWidget *parent): QDialog(parent) {
         "QTextEdit { background-color: %1; color: %2; border: none; }"
     ).arg(baseBg, textColor));
 }
+
+#include "ShijimaLicensesDialog.moc"

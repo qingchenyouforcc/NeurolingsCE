@@ -19,6 +19,8 @@ SOURCES = src/app/main.cc \
 	src/app/ShijimaHttpApi.cc \
 	src/app/cli.cc \
 	src/app/SpeechBubbleWidget.cc \
+	src/app/SimpleZipImporter.cc \
+	miniz/miniz.c \
 	src/resources/resources.rc \
 	qrc_resources.cc \
 	qrc_i18n.cc
@@ -63,7 +65,8 @@ else
 CXXFLAGS += -DSHIJIMA_USE_QTMULTIMEDIA=0
 endif
 
-CXXFLAGS += -Iinclude -Isrc/platform -Ilibshijima -Ilibshimejifinder -Icpp-httplib -IElaWidgetTools/ElaWidgetTools -DNEUROLINGSCE_VERSION='"0.1.0"'
+CXXFLAGS += -Iinclude -Isrc/platform -Ilibshijima -Ilibshimejifinder -Icpp-httplib -IElaWidgetTools/ElaWidgetTools -I. -DNEUROLINGSCE_VERSION='"0.1.0"'
+CPPFLAGS += -Iminiz
 PKG_LIBS += libarchive
 PUBLISH_DLL = $(addprefix Qt6,$(QT_LIBS))
 

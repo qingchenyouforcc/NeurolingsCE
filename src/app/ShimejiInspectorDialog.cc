@@ -149,3 +149,5 @@ void ShimejiInspectorDialog::tick() {
         callback();
     }
 }
+
+#include "ShimejiInspectorDialog.moc"

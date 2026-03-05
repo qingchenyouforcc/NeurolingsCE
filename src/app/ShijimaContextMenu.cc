@@ -111,3 +111,5 @@ ShijimaContextMenu::~ShijimaContextMenu() {
     }
 }
 */
+
+#include "ShijimaContextMenu.moc"

@@ -218,3 +218,5 @@ QString SpeechBubbleWidget::randomBubbleText(const QString &mascotPath) {
     int index = QRandomGenerator::global()->bounded(texts.size());
     return texts.at(index);
 }
+
+#include "SpeechBubbleWidget.moc"

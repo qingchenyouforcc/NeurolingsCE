@@ -195,4 +195,8 @@ src/app/%.moc: include/shijima-qt/%.hpp
 
 # Ensure moc files are generated before compiling objects that need them
 src/app/ShijimaManager.o: src/app/ShijimaManager.moc
+src/app/ShijimaContextMenu.o: src/app/ShijimaContextMenu.moc
+src/app/ShijimaLicensesDialog.o: src/app/ShijimaLicensesDialog.moc
+src/app/ShimejiInspectorDialog.o: src/app/ShimejiInspectorDialog.moc
+src/app/SpeechBubbleWidget.o: src/app/SpeechBubbleWidget.moc
 -include *.d
