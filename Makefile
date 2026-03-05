@@ -194,7 +194,12 @@ libshimejifinder/build/libshimejifinder.a: libshimejifinder/build/Makefile
 		libshimejifinder/build/unarr/libunarr.dll; fi
 
 ElaWidgetTools/build/Makefile: ElaWidgetTools/ElaWidgetTools/CMakeLists.txt cmake/ElaWidgetToolsBuild/CMakeLists.txt FORCE
+ifeq ($(PLATFORM),Windows)
+	# For MinGW cross-compilation in Docker, override the hardcoded QT_SDK_DIR
+	mkdir -p ElaWidgetTools/build && cd ElaWidgetTools/build && $(CMAKE) $(CMAKEFLAGS) -DQT_SDK_DIR=/usr/x86_64-w64-mingw32/sys-root/mingw -DELAWIDGETTOOLS_BUILD_STATIC_LIB=ON -DELAWIDGETTOOLS_SOURCE_DIR=$(shell pwd)/ElaWidgetTools/ElaWidgetTools ../../cmake/ElaWidgetToolsBuild
+else
 	mkdir -p ElaWidgetTools/build && cd ElaWidgetTools/build && $(CMAKE) $(CMAKEFLAGS) -DELAWIDGETTOOLS_BUILD_STATIC_LIB=ON -DELAWIDGETTOOLS_SOURCE_DIR=$(shell pwd)/ElaWidgetTools/ElaWidgetTools ../../cmake/ElaWidgetToolsBuild
+endif
 
 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a: ElaWidgetTools/build/Makefile
 	$(MAKE) -C ElaWidgetTools/build

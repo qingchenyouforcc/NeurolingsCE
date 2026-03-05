@@ -35,6 +35,13 @@ jobs:
         if: steps.cache-docker.outputs.cache-hit == 'true'
         run: |
           gunzip -c < shijima-qt-dev.tar.gz | docker load
+      - name: Patch ElaWidgetTools for Qt 6.8 compatibility
+        run: |
+          # Remove the Qt version upper bound check in ElaWidgetTools
+          # This allows building with Qt 6.8+ in the Docker environment
+          sed -i 's/if (${QT_VERSION} VERSION_GREATER 6.7.0 OR ${QT_VERSION} VERSION_LESS 5.12.0)/if (${QT_VERSION} VERSION_LESS 5.12.0)/' ElaWidgetTools/CMakeLists.txt
+          # Change FATAL_ERROR to WARNING for the intermediate Qt versions
+          sed -i 's/message(FATAL_ERROR "你当前使用的QT版本为不推荐版本/message(WARNING "你当前使用的QT版本为不推荐版本/' ElaWidgetTools/CMakeLists.txt
       - name: Build Windows x86_64 release build
         run: |
           docker run -e CONFIG=release --rm -v "$(pwd)":/work shijima-qt-dev bash -c \
