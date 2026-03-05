@@ -1,5 +1,10 @@
 name: Build debug
 
+# 防止重复构建：同一分支/PR的新提交会取消旧的进行中的构建
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -27,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: shijima-qt-dev.tar.gz
-          key: docker-fedora-42-qt6-mingw-${{ hashFiles('dev-docker/Dockerfile') }}
+          key: docker-fedora-42-qt6-mingw-v2-${{ hashFiles('dev-docker/Dockerfile') }}
       - name: Build Docker image
         if: steps.cache-docker.outputs.cache-hit != 'true'
         run: |
@@ -49,7 +54,7 @@ jobs:
       - name: Build Windows x86_64 debug build
         run: |
           docker run -e CONFIG=debug --rm -v "$(pwd)":/work shijima-qt-dev bash -c \
-            'dnf install -y mingw64-qt6-qtbase-private-devel 2>/dev/null || true; mingw64-make clean && mingw64-make -j$(nproc)'
+            'mingw64-make clean && mingw64-make -j2'
       - name: Archive Windows x86_64 debug build
         uses: actions/upload-artifact@v4
         with:
@@ -119,7 +124,7 @@ jobs:
           make licenses_generated.hpp
           # Copy licenses header to include directory so compiler can find it
           cp licenses_generated.hpp include/
-          make -j$(nproc)
+          make -j2  # 限制并行度，避免资源耗尽
       - name: Archive Linux debug build
         uses: actions/upload-artifact@v4
         with:
