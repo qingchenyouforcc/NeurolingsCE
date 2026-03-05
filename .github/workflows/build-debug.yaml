@@ -100,8 +100,6 @@ jobs:
         with:
           key: ${{ matrix.runner }}-qt6
           max-size: 500M
-        run: |
-          sudo apt-get install -y libxcb-cursor0 libarchive-dev libwayland-dev wayland-protocols qt6-base-private-dev
       - name: Debug Qt installation
         env:
           QT_DIR: ${{ runner.workspace }}/Qt/6.8.2/${{ (matrix.runner == 'ubuntu-24.04-arm') && 'gcc_arm64' || 'gcc_64' }}
