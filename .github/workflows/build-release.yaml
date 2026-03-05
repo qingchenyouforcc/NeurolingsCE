@@ -45,7 +45,7 @@ jobs:
       - name: Build Windows x86_64 release build
         run: |
           docker run -e CONFIG=release --rm -v "$(pwd)":/work shijima-qt-dev bash -c \
-            'mingw64-make clean && mingw64-make -j$(nproc) && cp -r licenses publish/Windows/release/'
+            'dnf install -y mingw64-qt6-qtbase-private-devel 2>/dev/null || true; mingw64-make clean && mingw64-make -j$(nproc) && cp -r licenses publish/Windows/release/'
       - name: Archive Windows x86_64 release build
         uses: actions/upload-artifact@v4
         with:
