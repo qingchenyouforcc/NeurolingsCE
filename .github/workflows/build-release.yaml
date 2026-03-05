@@ -193,6 +193,8 @@ jobs:
           export CXXFLAGS="$CXXFLAGS -I$PRIVATE_HEADERS_PATH -I$PRIVATE_CORE_PATH"
           export CMAKEFLAGS="-DCMAKE_CXX_FLAGS=-I$PRIVATE_HEADERS_PATH -I$PRIVATE_CORE_PATH"
           echo "::group::Building ElaWidgetTools"
+          # Clean CMake cache to force reconfiguration with new flags
+          rm -f ElaWidgetTools/build/CMakeCache.txt
           # Use -j2 instead of -j4 to avoid resource exhaustion on GitHub runners
           time make -j2 ElaWidgetTools/build/ElaWidgetTools/libElaWidgetTools.a
           echo "::endgroup::"
