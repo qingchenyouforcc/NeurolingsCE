@@ -177,13 +177,13 @@ licenses_generated.hpp: $(LICENSE_FILES) Makefile
 	echo ')";' >> licenses_generated.hpp
 
 qrc_resources.cc: src/resources/resources.qrc src/packaging/neurolingsce.ico src/packaging/io.github.qingchenyouforcc.NeurolingsCE.png
-	$(RCC) -o $@ $<
+	$(RCC) --name resources -o $@ $<
 
 translations/%.qm: translations/%.ts
 	$(LRELEASE) $< -qm $@
 
 qrc_i18n.cc: translations/i18n.qrc $(QM_FILES)
-	$(RCC) -o $@ $<
+	$(RCC) --name i18n -o $@ $<
 libshijima/build/Makefile: libshijima/CMakeLists.txt FORCE
 	mkdir -p libshijima/build && cd libshijima/build && $(CMAKE) $(CMAKEFLAGS) -DSHIJIMA_BUILD_EXAMPLES=NO ..
 
