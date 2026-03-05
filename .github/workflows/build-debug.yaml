@@ -113,7 +113,7 @@ jobs:
           # Explicitly set Qt tool paths to ensure they're found
           export MOC="$QT_DIR/libexec/moc"
           export RCC="$QT_DIR/libexec/rcc"
-          export LRELEASE="$QT_DIR/libexec/lrelease"
+          export LRELEASE="$QT_DIR/bin/lrelease"
           make clean
           make -j$(nproc)
       - name: Archive Linux debug build
