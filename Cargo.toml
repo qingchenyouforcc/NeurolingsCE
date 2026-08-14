@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/neurolings-common",
+    "crates/neurolings-engine",
+    "crates/neurolings-pack",
+    "crates/neurolings-platform",
+    "crates/neurolings-runtime",
+    "crates/neurolings-cli",
+    "crates/neurolings-store",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+repository = "https://github.com/qingchenyouforcc/Neurolings-rs"
+
+[workspace.dependencies]
+neurolings-common = { path = "crates/neurolings-common" }
+neurolings-engine = { path = "crates/neurolings-engine" }
+neurolings-pack = { path = "crates/neurolings-pack" }
+neurolings-platform = { path = "crates/neurolings-platform" }
+neurolings-store = { path = "crates/neurolings-store" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

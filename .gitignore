@@ -1,0 +1,35 @@
+# Rust 构建产物
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# 组装输出（cargo xtask build/run 生成）
+/dist
+
+# 运行时/调试产物
+*.log
+neurolings_mouse_debug.log
+neurolings_runtime_debug.log
+
+# Flutter / Dart
+manager/.dart_tool/
+manager/build/
+manager/.flutter-plugins
+manager/.flutter-plugins-dependencies
+manager/windows/flutter/ephemeral/
+manager/.metadata
+manager/.gitignore_local
+
+# Flutter 构建中间产物
+**/flutter/ephemeral/
+**/.plugin_symlinks/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.iml
