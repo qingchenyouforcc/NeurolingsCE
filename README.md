@@ -1,7 +1,7 @@
 # Neurolings-rs
 
 NeurolingsCE 的 Rust + Flutter 重写：跨平台桌面看板娘（Shimeji）运行器。
-原 C++/Qt 实现见 [NeurolingsCE](https://github.com/qingchenyouforcc/NeurolingsCE)；
+原 C++/Qt 实现见 [NeurolingsCE](https://github.com/qingchenyouforcc/NeurolingsCE-QT)；
 本仓库按 `docs/REWRITE_PLAN.md` 的里程碑完成迁移。
 
 ## 架构
