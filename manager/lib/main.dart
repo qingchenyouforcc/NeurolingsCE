@@ -91,7 +91,8 @@ class _ManagerShellState extends State<ManagerShell> {
       const InspectorPage(),
       const AboutPage(),
     ];
-    return NavigationView(
+      // 主区 5 项 + 底部 3 项，对齐原版 addPageNode vs addFooterNode
+      return NavigationView(
       pane: NavigationPane(
         selected: _index,
         onChanged: (index) => setState(() => _index = index),
@@ -102,13 +103,13 @@ class _ManagerShellState extends State<ManagerShell> {
               title: Text(l10n.navHome),
               body: pages[0]),
           PaneItem(
-              icon: const Icon(FluentIcons.fabric_new_folder),
-              title: Text(l10n.navCreate),
-              body: pages[1]),
-          PaneItem(
               icon: const Icon(FluentIcons.shop),
               title: Text(l10n.navStore),
               body: pages[2]),
+          PaneItem(
+              icon: const Icon(FluentIcons.fabric_new_folder),
+              title: Text(l10n.navCreate),
+              body: pages[1]),
           PaneItem(
               icon: const Icon(FluentIcons.group),
               title: Text(l10n.navCombinations),
@@ -117,14 +118,16 @@ class _ManagerShellState extends State<ManagerShell> {
               icon: const Icon(FluentIcons.robot),
               title: Text(l10n.navCodex),
               body: pages[4]),
-          PaneItem(
-              icon: const Icon(FluentIcons.settings),
-              title: Text(l10n.navSettings),
-              body: pages[5]),
+        ],
+        footerItems: [
           PaneItem(
               icon: const Icon(FluentIcons.view_dashboard),
               title: const Text('检查器'),
               body: pages[6]),
+          PaneItem(
+              icon: const Icon(FluentIcons.settings),
+              title: Text(l10n.navSettings),
+              body: pages[5]),
           PaneItem(
               icon: const Icon(FluentIcons.info),
               title: Text(l10n.navAbout),
