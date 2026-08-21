@@ -1303,6 +1303,7 @@ dependencies = [
  "neurolings-engine",
  "neurolings-pack",
  "neurolings-platform",
+ "neurolings-store",
  "rodio",
  "serde",
  "serde_json",

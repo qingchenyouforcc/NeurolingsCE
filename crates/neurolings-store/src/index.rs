@@ -1,8 +1,8 @@
 //! 商店索引：模型、解析、版本比较与查询过滤。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct StoreMedia {
     #[serde(default)]
     pub url: String,
@@ -16,7 +16,7 @@ fn default_neg_one() -> i64 {
     -1
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreEntry {
     #[serde(default)]
@@ -51,7 +51,7 @@ pub struct StoreEntry {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreIndex {
     #[serde(default)]

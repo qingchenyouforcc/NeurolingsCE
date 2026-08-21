@@ -134,6 +134,9 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
         "set_window_mode" => set_window_mode(view, request),
         "get_settings" => get_settings_command(view, request),
         "set_settings" => set_settings_command(view, request),
+        "store_status" => store_status_command(),
+        "store_index" => store_index_command(view, request),
+        "store_install" => store_install_command(view, request),
         _ => error_json("Unknown command", "bad_request", 400),
     }
 }
@@ -963,6 +966,181 @@ fn codex_setup_command(request: &Value) -> Value {
 
 fn codex_status_command() -> Value {
     json!({ "installed": crate::codex::is_codex_notify_hook_installed() })
+}
+
+/// 商店缓存目录（mascot-cache/store，与 C++ 版缓存布局一致）。
+fn store_cache_dir() -> Option<std::path::PathBuf> {
+    let storage = neurolings_pack::storage::default_storage_path()?;
+    let dir = storage
+        .parent()
+        .map(|p| p.join("mascot-cache").join("store"))
+        .unwrap_or_else(|| storage.join("mascot-cache").join("store"));
+    Some(dir)
+}
+
+fn store_status_command() -> Value {
+    json!({
+        "configured": neurolings_store::config::is_configured(),
+        "index_url": neurolings_store::config::index_url(),
+        "login_configured": neurolings_store::config::is_login_configured(),
+    })
+}
+
+/// 拉取（或读缓存）商店索引；refresh=true 时强制网络刷新。
+fn store_index_command(view: &mut RuntimeView, request: &Value) -> Value {
+    use neurolings_store::{StoreCache, fetch_index};
+
+    let refresh = request
+        .get("refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let url = neurolings_store::config::index_url();
+    if url.is_empty() {
+        return error_json(
+            "Store index URL is not configured",
+            "store_not_configured",
+            503,
+        );
+    }
+    let Some(dir) = store_cache_dir() else {
+        return error_json("Storage unavailable", "storage_unavailable", 500);
+    };
+    let cache = StoreCache::new(dir);
+
+    let cached = cache.load_index();
+    if !refresh
+        && let Some(c) = &cached
+        && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+    {
+        return store_index_json(&index, true);
+    }
+
+    let (etag, lm) = cached
+        .as_ref()
+        .map(|c| (c.etag.clone(), c.last_modified.clone()))
+        .unwrap_or_default();
+    let response = fetch_index(&url, &etag, &lm, 8000);
+    if !response.ok {
+        // 网络失败时退回缓存（若有）。
+        if let Some(c) = &cached
+            && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+        {
+            let mut out = store_index_json(&index, true);
+            out["warning"] = json!({ "code": response.error_code, "error": response.error });
+            return out;
+        }
+        return error_json(&response.error, &response.error_code, 502);
+    }
+    if response.not_modified {
+        if let Some(c) = &cached
+            && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+        {
+            return store_index_json(&index, true);
+        }
+        return error_json("Empty store cache", "store_empty", 502);
+    }
+
+    let index: neurolings_store::StoreIndex = match serde_json::from_slice(&response.body) {
+        Ok(v) => v,
+        Err(e) => {
+            return error_json(
+                &format!("Invalid store index: {e}"),
+                "invalid_index",
+                502,
+            )
+        }
+    };
+    let _ = cache.save_index(&neurolings_store::CachedIndex {
+        body: response.body.clone(),
+        etag: response.etag.clone(),
+        last_modified: response.last_modified.clone(),
+    });
+    debug_log(&format!(
+        "store_index: fetched {} entries from {}",
+        index.entries.len(),
+        url
+    ));
+    let _ = view; // 索引命令不改动运行时会话状态。
+    store_index_json(&index, false)
+}
+
+fn store_index_json(index: &neurolings_store::StoreIndex, from_cache: bool) -> Value {
+    json!({
+        "ok": true,
+        "from_cache": from_cache,
+        "registry": index.registry,
+        "generated_at": index.generated_at,
+        "entries": index.entries,
+    })
+}
+
+/// 商店安装：按 id 找条目 → 受信 URL 校验 → SHA-256 下载 → 复用
+/// import_mascot_template 导入 → 返回导入结果。
+fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
+    use neurolings_store::{StoreCache, download};
+
+    let Some(id) = request.get("id").and_then(Value::as_str) else {
+        return error_json("id is required", "bad_request", 400);
+    };
+    let Some(dir) = store_cache_dir() else {
+        return error_json("Storage unavailable", "storage_unavailable", 500);
+    };
+    let cache = StoreCache::new(&dir);
+    let Some(cached) = cache.load_index() else {
+        return error_json(
+            "Store index not fetched yet; refresh first",
+            "store_empty",
+            409,
+        );
+    };
+    let index: neurolings_store::StoreIndex =
+        match serde_json::from_slice(&cached.body) {
+            Ok(v) => v,
+            Err(e) => {
+                return error_json(&format!("Invalid cached index: {e}"), "invalid_index", 500)
+            }
+        };
+    let Some(entry) = index.entries.iter().find(|e| e.id == id) else {
+        return error_json("No such store entry", "entry_not_found", 404);
+    };
+    if entry.download.url.is_empty() {
+        return error_json("Entry has no download URL", "invalid_entry", 400);
+    }
+    if !neurolings_store::index::is_trusted_download_url(&entry.download.url, &index.registry) {
+        return error_json(
+            "Download URL is not from a trusted host",
+            "untrusted_url",
+            400,
+        );
+    }
+
+    let file_name = entry
+        .download
+        .url
+        .rsplit('/')
+        .next()
+        .unwrap_or("mascot.mascot")
+        .to_string();
+    let downloads = dir.join("downloads");
+    let _ = std::fs::create_dir_all(&downloads);
+    let destination = downloads.join(&file_name);
+
+    if let Err(e) = download(
+        &entry.download.url,
+        &destination,
+        &entry.download.sha256,
+        60_000,
+    ) {
+        return error_json(&e, "download_failed", 502);
+    }
+
+    let mut import_request = json!({ "archive_path": destination.to_string_lossy() });
+    if let Some(label) = request.get("label") {
+        import_request["label"] = label.clone();
+    }
+    let mut result = import_mascot_template(view, &import_request);
+    result["store_entry"] = json!({ "id": entry.id, "name": entry.name, "version": entry.version });
+    result
 }
 
 fn set_window_mode(view: &mut RuntimeView, request: &Value) -> Value {

@@ -14,6 +14,7 @@ neurolings-common.workspace = true
 neurolings-engine.workspace = true
 neurolings-pack.workspace = true
 neurolings-platform.workspace = true
+neurolings-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -7,10 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'pages/about_page.dart';
+import 'pages/codex_page.dart';
+import 'pages/combinations_page.dart';
 import 'pages/create_page.dart';
 import 'pages/home_page.dart';
-import 'pages/placeholder_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/store_page.dart';
 import 'state/app_state.dart';
 import 'state/settings.dart';
 
@@ -81,10 +83,9 @@ class _ManagerShellState extends State<ManagerShell> {
     final pages = <Widget>[
       const HomePage(),
       const CreatePage(),
-      PlaceholderPage(title: l10n.navStore, message: l10n.storePlaceholder),
-      PlaceholderPage(
-          title: l10n.navCombinations, message: l10n.combinationsPlaceholder),
-      PlaceholderPage(title: l10n.navCodex, message: l10n.codexPlaceholder),
+      const StorePage(),
+      const CombinationsPage(),
+      const CodexPage(),
       const SettingsPage(),
       const AboutPage(),
     ];

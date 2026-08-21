@@ -124,13 +124,15 @@ Flutter 侧：`fluent_ui`、`window_manager`、`http`、`flutter_riverpod`、arb
 - M7 完成：neurolings-store crate——索引模型/解析/语义化版本比较/查询过滤、原子缓存（index+previous+meta 轮换、ETag/Last-Modified）、SHA-256 校验下载、GitHub Device Flow（device_code/轮询/slow_down/凭据存储 keyring+内存双实现）、投稿客户端（两阶段 HMAC 会话 token + multipart 上传 + 幂等键）。6 项单测绿。商店/投稿服务端与 GitHub App 配置仍需维护者部署（与原 C++ 计划一致），Flutter 商店页待服务端就绪接线。
 - M8 完成：Codex 集成（~/.codex/config.toml 标记块安装/卸载 + --codex-notify → IPC → 桌宠气泡）、语音气泡（Windows GDI 双 DC 掩码渲染圆角气泡窗口，随 tick 定位/过期回收）、桌宠组合（save/restore/list/delete，combinations.json 原子持久化，restore 清场重建）、开机自启（Windows 注册表 Run 键 + Linux XDG autostart + IPC set/get_autostart）、窗口模式（沙盒画布合成渲染，IPC set_window_mode）、HTTP 通用 POST /command 透传。E2E 实测：召唤→存组合→恢复组合（spawned=2）→删组合→气泡/窗口模式/autostart/codex 全部通过；51+ 项测试绿。
 - M9 完成：更新器（neurolings-store::updater——清单 schema 校验、min_supported_version 强制更新判定、平台资产键、SHA-256 下载校验，5 项单测）、Windows 打包脚本（packaging/package-windows.ps1：runtime+CLI+管理器汇总+SHA256SUMS.txt）、项目 README 与打包文档。最终门禁：56 项测试全绿、clippy -D warnings 零警告、cargo fmt 干净、--smoke 150 tick 通过。
+- M7 UI 接线完成：运行时新增 store_status/store_index/store_install 命令（ETag 条件拉取+原子缓存+受信 URL 校验+SHA-256 下载+复用模板导入）；Flutter StorePage 完整接线（索引浏览/搜索/安装/状态提示），实测 staging registry 索引拉取成功（ok:true）；CombinationsPage/CodexPage 同步接线到 list/save/restore/delete_combination 与 codex_status/codex_setup 命令。E2E 实测：store_status/store_index、召唤 Cerber→save_combination(e2e-test)→restore(spawned=1)→delete 全链路通过；76 项测试全绿、clippy -D warnings 零警告、flutter analyze 零问题、--smoke 150 tick 通过。
 
 ## 遗留事项（需真机/维护者介入）
 
 1. Linux/macOS 桌宠窗口需真机视觉验证（本机为 Windows，仅交叉编译检查）。
-2. 商店/投稿服务端、GitHub App、Pages 需维护者部署后启用 Flutter 商店页接线。
+2. 投稿服务端、GitHub App、Pages 需维护者部署后启用投稿与 GitHub 登录 UI（商店索引浏览/安装已接线，经 NEUROLINGSCE_MASCOT_INDEX_URL 配置即可用）。
 3. 跨 C++ 二进制逐 tick golden diff 需 Qt6/MSVC 构建环境。
 4. MSI 签名与正式发布流水线（WiX）待发布时搭建。
+5. Flutter StorePage 的 GitHub 登录/投稿 UI、更新检查提示 UI 待服务端就绪后接线（客户端库已完整实现）。
 
 ## 6. 主要风险
 

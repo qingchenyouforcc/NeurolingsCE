@@ -156,6 +156,16 @@ class RuntimeApi {
     _decode(response);
   }
 
+  /// Sends an arbitrary command through POST /command (runtime extension).
+  Future<Map<String, dynamic>> command(Map<String, dynamic> payload) async {
+    final response = await _client.post(
+      _uri('/command'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    return _decode(response);
+  }
+
   void close() => _client.close();
 }
 
