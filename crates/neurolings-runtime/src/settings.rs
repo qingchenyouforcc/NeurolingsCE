@@ -8,18 +8,25 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-/// 全部设置键及其默认值。
+/// 全部设置键及其默认值（与原版 QSettings 键名逐一对齐）。
 pub const KEY_USER_SCALE: &str = "userScale";
 pub const KEY_DETACH_THRESHOLD: &str = "detachThreshold";
 pub const KEY_WINDOW_PUSHING: &str = "windowPushingEnabled";
 pub const KEY_BUBBLE_ENABLED: &str = "speechBubbleEnabled";
 pub const KEY_BUBBLE_CLICKS: &str = "speechBubbleClickCount";
+pub const KEY_MULTIPLICATION: &str = "multiplicationEnabled";
 pub const KEY_CODEX_ENABLED: &str = "codex/enabled";
 pub const KEY_CODEX_TEMPLATE: &str = "codex/companionTemplate";
+pub const KEY_CODEX_APP_SERVER_ENABLED: &str = "codex/appServerEnabled";
+pub const KEY_CODEX_APP_SERVER_EXECUTABLE: &str = "codex/appServerExecutable";
+pub const KEY_CODEX_APPROVAL_BUBBLE: &str = "codex/approvalBubbleEnabled";
+pub const KEY_CODEX_PLAN_BUBBLE: &str = "codex/planBubbleEnabled";
 pub const KEY_HTTP_ENABLED: &str = "http/enabled";
 pub const KEY_STARTUP_SILENT: &str = "startup/silent";
 pub const KEY_STARTUP_COMBO_MODE: &str = "startup/restoreCombinationMode";
 pub const KEY_STARTUP_COMBO_ID: &str = "startup/restoreCombinationId";
+pub const KEY_WINDOWED_BG: &str = "windowedModeBackground";
+pub const KEY_UPDATE_CHECK: &str = "update/checkOnStartup";
 pub const KEY_LANGUAGE: &str = "language";
 
 /// 语言的运行时文案（右键菜单/托盘）。

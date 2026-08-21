@@ -126,6 +126,7 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
         "save_combination" => save_combination(view, request),
         "restore_combination" => restore_combination(view, request),
         "list_combinations" => list_combinations(view),
+        "get_combination" => get_combination(view, request),
         "delete_combination" => delete_combination(view, request),
         "set_autostart" => set_autostart_command(request),
         "get_autostart" => get_autostart_command(),
@@ -898,21 +899,65 @@ fn restore_combination(view: &mut RuntimeView, request: &Value) -> Value {
     let Some(combo) = view.combinations.get(name) else {
         return error_json("No such combination", "combination_not_found", 404);
     };
-    // 恢复 = 清场重建。
+    // 恢复 = 清场重建（对齐原版 50/200 安全限位与 missing/failed 去重）。
     view.sessions.clear();
     view.labels.clear();
-    let mut spawned = 0u64;
+
+    // 聚合计数，复刻原版按模板分组后逐项 clamp 50、上限 200。
+    let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for m in &combo.members {
+        *counts.entry(m.template.clone()).or_insert(0) += 1;
+    }
+    const K_MAX_PER_ENTRY: u64 = 50;
+    const K_MAX_PER_COMBINATION: u64 = 200;
+    let mut attempted: u64 = 0;
+    let mut spawned: u64 = 0;
+    let mut missing: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
     let mut last_error: Option<Value> = None;
-    for member in &combo.members {
-        let req = json!({ "command": "spawn_mascot", "request": { "name": member.template } });
-        let result = spawn_mascot(view, &req);
-        if result.get("error").is_some() {
-            last_error = Some(result);
-        } else {
-            spawned += 1;
+
+    // 为保证可复现，按模板名排序后依次恢复
+    let mut sorted: Vec<(String, u64)> = counts.into_iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (template, mut count) in sorted {
+        if !view.templates.contains(&template) {
+            missing.push(template.clone());
+            continue;
+        }
+        if count > K_MAX_PER_ENTRY {
+            count = K_MAX_PER_ENTRY;
+        }
+        for _ in 0..count {
+            if attempted >= K_MAX_PER_COMBINATION {
+                break;
+            }
+            attempted += 1;
+            let req = json!({ "command": "spawn_mascot", "request": { "name": template } });
+            let result = spawn_mascot(view, &req);
+            if result.get("error").is_some() {
+                failed.push(template.clone());
+                last_error = Some(result);
+            } else {
+                spawned += 1;
+            }
+        }
+        if attempted >= K_MAX_PER_COMBINATION {
+            break;
         }
     }
-    let mut out = json!({ "restored": true, "name": name, "spawned": spawned });
+    // 去重（与原版 removeDuplicates 对齐）
+    missing.sort();
+    missing.dedup();
+    failed.sort();
+    failed.dedup();
+
+    let mut out = json!({ "restored": true, "name": name, "spawned": spawned, "attempted": attempted });
+    if !missing.is_empty() {
+        out["missing"] = json!(missing);
+    }
+    if !failed.is_empty() {
+        out["failed"] = json!(failed);
+    }
     if let Some(err) = last_error {
         out["warning"] = err;
     }
@@ -922,6 +967,43 @@ fn restore_combination(view: &mut RuntimeView, request: &Value) -> Value {
 fn list_combinations(view: &RuntimeView) -> Value {
     let names = view.combinations.list();
     json!({ "combinations": names })
+}
+
+fn get_combination(view: &RuntimeView, request: &Value) -> Value {
+    let Some(name) = request.get("name").and_then(Value::as_str) else {
+        return error_json("name is required", "bad_request", 400);
+    };
+    if name.trim().is_empty() {
+        return error_json("name is required", "bad_request", 400);
+    }
+    let Some(combo) = view.combinations.get(name) else {
+        return error_json("No such combination", "combination_not_found", 404);
+    };
+    // 聚合为与原版兼容的 mascots 数组：[{name, count}]
+    let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for m in &combo.members {
+        *counts.entry(m.template.clone()).or_insert(0) += 1;
+    }
+    let mut mascots: Vec<Value> = counts
+        .iter()
+        .map(|(k, v)| json!({ "name": k, "count": *v }))
+        .collect();
+    mascots.sort_by(|a, b| {
+        a.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("name").and_then(Value::as_str).unwrap_or(""))
+    });
+    let members: Vec<Value> = combo.members.iter().map(|m| json!({ "template": m.template })).collect();
+    let total: u64 = counts.values().sum();
+    json!({
+        "name": name,
+        "members": members,
+        "mascots": mascots,
+        "aggregated": mascots,
+        "count": combo.members.len(),
+        "total": total,
+    })
 }
 
 fn delete_combination(view: &mut RuntimeView, request: &Value) -> Value {
@@ -1176,12 +1258,19 @@ fn get_settings_command(view: &RuntimeView, request: &Value) -> Value {
         crate::settings::KEY_WINDOW_PUSHING,
         crate::settings::KEY_BUBBLE_ENABLED,
         crate::settings::KEY_BUBBLE_CLICKS,
+        crate::settings::KEY_MULTIPLICATION,
         crate::settings::KEY_CODEX_ENABLED,
         crate::settings::KEY_CODEX_TEMPLATE,
+        crate::settings::KEY_CODEX_APP_SERVER_ENABLED,
+        crate::settings::KEY_CODEX_APP_SERVER_EXECUTABLE,
+        crate::settings::KEY_CODEX_APPROVAL_BUBBLE,
+        crate::settings::KEY_CODEX_PLAN_BUBBLE,
         crate::settings::KEY_HTTP_ENABLED,
         crate::settings::KEY_STARTUP_SILENT,
         crate::settings::KEY_STARTUP_COMBO_MODE,
         crate::settings::KEY_STARTUP_COMBO_ID,
+        crate::settings::KEY_WINDOWED_BG,
+        crate::settings::KEY_UPDATE_CHECK,
         crate::settings::KEY_LANGUAGE,
     ] {
         if let Some(value) = view.settings.get(key) {

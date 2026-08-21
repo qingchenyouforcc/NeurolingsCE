@@ -51,6 +51,7 @@ impl EnvironmentSet {
         let detach = settings.detach_threshold();
         let allows_pushing = settings.get_bool(crate::settings::KEY_WINDOW_PUSHING, false)
             && backend.supports_window_pushing();
+        let allows_breeding = settings.get_bool(crate::settings::KEY_MULTIPLICATION, true);
 
         self.push_target = active.map(|a| a.handle).unwrap_or(0);
         let latest = backend.screens();
@@ -83,7 +84,7 @@ impl EnvironmentSet {
                 let env = retained
                     .remove(&key)
                     .unwrap_or_else(|| Rc::new(RefCell::new(Environment::default())));
-                Self::update_env(&env, &screen, cursor, active, scale, detach, allows_pushing);
+                Self::update_env(&env, &screen, cursor, active, scale, detach, allows_pushing, allows_breeding);
                 ScreenEnv { screen, env }
             })
             .collect();
@@ -107,7 +108,7 @@ impl EnvironmentSet {
                     bottom: h,
                 },
             };
-            Self::update_env(sandbox, &rect, cursor, None, scale, detach, false);
+            Self::update_env(sandbox, &rect, cursor, None, scale, detach, false, allows_breeding);
             // 沙盒环境的光标使用窗口局部坐标。
             if let Some(origin) = sandbox_origin {
                 let local_cursor = Vec2::new(
@@ -137,6 +138,7 @@ impl EnvironmentSet {
         scale: f64,
         detach_threshold: f64,
         allows_pushing: bool,
+        allows_breeding: bool,
     ) {
         let mut e = env.borrow_mut();
 
@@ -249,6 +251,7 @@ impl EnvironmentSet {
 
         e.subtick_count = crate::runtime::session::SUBTICK_COUNT;
         e.allows_window_pushing = allows_pushing;
+        e.allows_breeding = allows_breeding;
         // 用户缩放：引擎把大数值视为更小的物理单位，故取倒数开方。
         e.set_scale(scale);
     }
