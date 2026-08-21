@@ -633,6 +633,9 @@ fn import_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
         );
     }
     let _ = any_failed;
+    // 刷新托盘 Spawn 子菜单
+    #[cfg(windows)]
+    crate::tray::refresh(&view.templates.names_sorted());
     json!({ "loaded_mascots": loaded })
 }
 
@@ -686,10 +689,12 @@ fn remove_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
         .retain(|_, id| view.sessions.iter().any(|s| s.id == *id));
     view.templates.deregister(name);
     let _ = view.factory.deregister_template(name);
+    #[cfg(windows)]
+    crate::tray::refresh(&view.templates.names_sorted());
     json!({})
 }
 
-// ---- 预览与气泡 ----
+ // ---- 预览与气泡 ----
 
 fn preview_png(view: &RuntimeView, request: &Value) -> Value {
     let Some(id) = request.get("id").and_then(Value::as_i64) else {

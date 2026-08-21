@@ -1,0 +1,64 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-release:
+    name: Rust release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact: NeurolingsCE-windows-x64
+          - os: ubuntu-latest
+            artifact: NeurolingsCE-linux-x64
+          - os: macos-latest
+            artifact: NeurolingsCE-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace
+      - run: cargo test --release --workspace
+      - name: Package artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cargo install cargo-wix --version 0.3.8 --locked --force
+          .\packaging\package-windows.ps1
+          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            target/release/NeurolingsCE*
+            dist/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  flutter-release:
+    name: Flutter manager
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: manager
+      - run: flutter build windows --release
+        working-directory: manager
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neurolings_manager-windows
+          path: manager/build/windows/x64/runner/Release/
+          retention-days: 7
