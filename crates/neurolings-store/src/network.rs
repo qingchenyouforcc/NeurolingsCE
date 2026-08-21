@@ -32,9 +32,11 @@ impl IndexResponse {
 }
 
 pub fn fetch_index(url: &str, etag: &str, last_modified: &str, timeout_ms: u64) -> IndexResponse {
+    let version = neurolings_common::version::VERSION;
     let mut request = ureq::get(url)
         .timeout(Duration::from_millis(timeout_ms))
-        .set("Accept", "application/json");
+        .set("Accept", "application/json")
+        .set("User-Agent", &format!("NeurolingsCE/{version}"));
     if !etag.is_empty() {
         request = request.set("If-None-Match", etag);
     }
@@ -88,8 +90,7 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// 下载到临时文件、校验 SHA-256 后原子改名生效；失败时返回错误文本
-/// 并清理残留文件。
+/// 下载到临时文件、流式写入并校验 SHA-256 后原子改名；失败时清理残留。
 pub fn download(
     url: &str,
     destination: &Path,
@@ -101,26 +102,44 @@ pub fn download(
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    let version = neurolings_common::version::VERSION;
     let response = ureq::get(url)
         .timeout(Duration::from_millis(timeout_ms))
+        .set("User-Agent", &format!("NeurolingsCE/{version}"))
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
     if response.status() != 200 {
         return Err(format!("download failed with status {}", response.status()));
     }
 
-    let mut body = Vec::new();
-    response
-        .into_reader()
-        .read_to_end(&mut body)
-        .map_err(|e| format!("download read failed: {e}"))?;
+    // 流式：边读边写 .part，边算 SHA-256，避免大包 OOM
+    let mut reader = response.into_reader();
+    let mut file = fs::File::create(&partial).map_err(|e| format!("create partial: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| {
+            let _ = fs::remove_file(&partial);
+            format!("download read failed: {e}")
+        })?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        use std::io::Write;
+        file.write_all(&buf[..n]).map_err(|e| {
+            let _ = fs::remove_file(&partial);
+            format!("write partial: {e}")
+        })?;
+    }
+    drop(file);
 
-    let digest = sha256_bytes(&body);
+    let digest = hex::encode(hasher.finalize());
     if !expected_sha256.is_empty() && !digest.eq_ignore_ascii_case(expected_sha256) {
+        let _ = fs::remove_file(&partial);
         return Err("downloaded file failed SHA-256 verification".into());
     }
 
-    fs::write(&partial, &body).map_err(|e| format!("write partial: {e}"))?;
     fs::rename(&partial, destination).map_err(|e| {
         let _ = fs::remove_file(&partial);
         format!("finalize download: {e}")

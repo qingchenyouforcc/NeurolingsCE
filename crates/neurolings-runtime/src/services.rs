@@ -1216,13 +1216,27 @@ fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
     let _ = std::fs::create_dir_all(&downloads);
     let destination = downloads.join(&file_name);
 
-    if let Err(e) = download(
-        &entry.download.url,
-        &destination,
-        &entry.download.sha256,
-        60_000,
-    ) {
-        return error_json(&e, "download_failed", 502);
+    // 下载重试：对 network/timeout 错误最多 2 次重试（间隔 1500ms），对齐原版 kMaxDownloadRetries
+    let mut last_err = String::new();
+    let mut ok = false;
+    for attempt in 0..3 {
+        match download(&entry.download.url, &destination, &entry.download.sha256, 60_000) {
+            Ok(()) => {
+                ok = true;
+                break;
+            }
+            Err(e) => {
+                last_err = e.clone();
+                let is_retryable = e.contains("network") || e.contains("timeout") || e.contains("failed");
+                if !is_retryable || attempt == 2 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            }
+        }
+    }
+    if !ok {
+        return error_json(&last_err, "download_failed", 502);
     }
 
     let mut import_request = json!({ "archive_path": destination.to_string_lossy() });

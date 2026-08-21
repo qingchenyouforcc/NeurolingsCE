@@ -11,6 +11,7 @@ import 'pages/codex_page.dart';
 import 'pages/combinations_page.dart';
 import 'pages/create_page.dart';
 import 'pages/home_page.dart';
+import 'pages/inspector_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/store_page.dart';
 import 'state/app_state.dart';
@@ -87,6 +88,7 @@ class _ManagerShellState extends State<ManagerShell> {
       const CombinationsPage(),
       const CodexPage(),
       const SettingsPage(),
+      const InspectorPage(),
       const AboutPage(),
     ];
     return NavigationView(
@@ -120,9 +122,13 @@ class _ManagerShellState extends State<ManagerShell> {
               title: Text(l10n.navSettings),
               body: pages[5]),
           PaneItem(
+              icon: const Icon(FluentIcons.view_dashboard),
+              title: const Text('检查器'),
+              body: pages[6]),
+          PaneItem(
               icon: const Icon(FluentIcons.info),
               title: Text(l10n.navAbout),
-              body: pages[6]),
+              body: pages[7]),
         ],
       ),
     );

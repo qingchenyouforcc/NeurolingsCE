@@ -200,12 +200,13 @@ class _CodexPageState extends State<CodexPage> {
                   ]),
                   const SizedBox(height: 12),
                   Text(
-                    '启用后，NeurolingsCE 会在 ~/.codex/config.toml 中写入一个标记块：\n\n'
-                    '# >>> NeurolingsCE notify >>>\n'
+                    '启用后，NeurolingsCE 会在 ~/.codex/config.toml（优先 \$CODEX_HOME）中写入标记块：\n\n'
+                    '# BEGIN NeurolingsCE Codex notify\n'
                     'notify = ["NeurolingsCE-cli", "--codex-notify"]\n'
-                    '# <<< NeurolingsCE notify <<<\n\n'
-                    '当 Codex 产生会话事件时，该钩子会调用 CLI，运行时随后在伴生'
-                    '桌宠上显示气泡。禁用时标记块会被完整移除，不影响其他配置。',
+                    '# END NeurolingsCE Codex notify\n\n'
+                    '若已存在单条 codex-computer-use 通知，会自动桥接并在禁用时还原；\n'
+                    '若已存在其他 notify 配置会提示冲突，避免破坏用户配置。\n'
+                    '当 Codex 产生会话事件时，该钩子会调用 CLI，运行时随后在伴生桌宠上显示气泡。',
                     style: FluentTheme.of(context).typography.body,
                   ),
                 ]),
