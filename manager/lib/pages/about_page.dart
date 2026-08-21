@@ -136,7 +136,7 @@ License: GPL-3.0-only
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               Button(onPressed: _copyVersion, child: const Text('复制版本信息')),
-              if (_copyStatus != null) Padding(padding: const EdgeInsets.only(left: 8), child: Text(_copyStatus!, style: const TextStyle(color: Colors.green, fontSize: 12))),
+              if (_copyStatus != null) Padding(padding: const EdgeInsets.only(left: 8), child: Text(_copyStatus!, style: TextStyle(color: Colors.green, fontSize: 12))),
             ]),
             if (_copyStatus != null) const SizedBox(height: 4),
           ]),
