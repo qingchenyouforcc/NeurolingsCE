@@ -22,23 +22,26 @@ impl StoreCache {
     }
 
     pub fn index_file_path(&self) -> PathBuf {
-        self.root.join("index.json")
+        self.root.join("index-v1.json")
     }
 
     pub fn previous_index_file_path(&self) -> PathBuf {
-        self.root.join("index.previous.json")
+        self.root.join("index-v1.previous.json")
     }
 
     pub fn metadata_file_path(&self) -> PathBuf {
-        self.root.join("index.meta.json")
+        self.root.join("index-v1.meta")
     }
 
     pub fn load_index(&self) -> Option<CachedIndex> {
+        // 优先新路径，兼容旧路径 index.json
         self.read_index_file(&self.index_file_path())
+            .or_else(|| self.read_index_file(&self.root.join("index.json")))
     }
 
     pub fn load_previous_index(&self) -> Option<CachedIndex> {
         self.read_index_file(&self.previous_index_file_path())
+            .or_else(|| self.read_index_file(&self.root.join("index.previous.json")))
     }
 
     fn read_index_file(&self, path: &Path) -> Option<CachedIndex> {
@@ -48,6 +51,13 @@ impl StoreCache {
         }
         let meta = fs::read_to_string(self.metadata_file_path()).unwrap_or_default();
         let meta: serde_json::Value = serde_json::from_str(&meta).unwrap_or_default();
+        // 兼容旧缓存的驼峰键 lastModified 与原版下划线 last_modified
+        let last_modified = meta
+            .get("last_modified")
+            .or_else(|| meta.get("lastModified"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         Some(CachedIndex {
             body,
             etag: meta
@@ -55,11 +65,7 @@ impl StoreCache {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            last_modified: meta
-                .get("lastModified")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            last_modified,
         })
     }
 
@@ -72,15 +78,15 @@ impl StoreCache {
             let _ = fs::copy(self.index_file_path(), self.previous_index_file_path());
         }
 
-        let tmp = self.root.join("index.json.tmp");
+        let tmp = self.root.join("index-v1.json.tmp");
         fs::write(&tmp, &index.body).map_err(|e| format!("write tmp: {e}"))?;
         fs::rename(&tmp, self.index_file_path()).map_err(|e| format!("rename: {e}"))?;
 
         let meta = serde_json::json!({
             "etag": index.etag,
-            "lastModified": index.last_modified,
+            "last_modified": index.last_modified,
         });
-        let meta_tmp = self.root.join("index.meta.json.tmp");
+        let meta_tmp = self.root.join("index-v1.meta.tmp");
         fs::write(&meta_tmp, meta.to_string()).map_err(|e| format!("meta: {e}"))?;
         fs::rename(&meta_tmp, self.metadata_file_path())
             .map_err(|e| format!("meta rename: {e}"))?;

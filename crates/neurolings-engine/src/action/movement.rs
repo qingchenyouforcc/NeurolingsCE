@@ -11,10 +11,6 @@ use super::animation::{AnimationAction, AnimationBase};
 use super::{Action, ActionBase};
 
 /// 判断从 start 到 end 的移动是否越过了 v（含方向无关的双向判定）。
-///
-/// 注意：出于历史原因，垂直移动（TargetY）的越过判定同样使用水平坐标，
-/// 爬墙类动作实际靠 Condition/Duration 结束。保持该行为不变，
-/// 修改它会影响既有桌宠包的动作节奏。
 fn passed(start: f64, end: f64, v: f64) -> bool {
     (start >= v && end <= v) || (start <= v && end >= v)
 }
@@ -94,8 +90,8 @@ impl Action for Move {
             }
         } else if self.anim.base.vars.has("TargetY") {
             let y = self.anim.base.vars.get_num("TargetY", 0.0);
-            // 沿用历史行为：此处比较的是水平坐标（见 passed 的注释）。
-            if passed(start.x, end.x, y) {
+            // 修复原版 move.cc 历史 bug：TargetY 应比较 y 坐标而非 x
+            if passed(start.y, end.y, y) {
                 mascot.borrow_mut().anchor.y = y;
                 return Ok(false);
             }

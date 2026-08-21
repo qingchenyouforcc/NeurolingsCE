@@ -48,7 +48,14 @@ fn run_or_exit(cmd: &mut Command, what: &str) {
 fn build_rust(root: &Path) {
     run_or_exit(
         Command::new("cargo")
-            .args(["build", "--release", "-p", "neurolings-runtime", "-p", "neurolings-cli"])
+            .args([
+                "build",
+                "--release",
+                "-p",
+                "neurolings-runtime",
+                "-p",
+                "neurolings-cli",
+            ])
             .current_dir(root),
         "cargo build --release (runtime + cli)",
     );
@@ -138,7 +145,11 @@ fn assemble_dist(root: &Path) -> PathBuf {
 /// 结束正在运行的运行时/管理器/CLI，保证产物文件可被覆盖。
 fn kill_running() {
     #[cfg(windows)]
-    for im in ["NeurolingsCE.exe", "neurolings_manager.exe", "NeurolingsCE-cli.exe"] {
+    for im in [
+        "NeurolingsCE.exe",
+        "neurolings_manager.exe",
+        "NeurolingsCE-cli.exe",
+    ] {
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", im])
             .stdout(Stdio::null())
@@ -180,7 +191,14 @@ fn run_app(root: &Path) {
     {
         // 用 shell 的 start 启动，完全脱离当前控制台，避免拖住父进程管道。
         let status = Command::new("cmd")
-            .args(["/c", "start", "", "/D", &out.display().to_string(), &runtime.display().to_string()])
+            .args([
+                "/c",
+                "start",
+                "",
+                "/D",
+                &out.display().to_string(),
+                &runtime.display().to_string(),
+            ])
             .env("NEUROLINGS_DEBUG", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())

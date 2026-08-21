@@ -1008,9 +1008,10 @@ fn store_index_command(view: &mut RuntimeView, request: &Value) -> Value {
     let cache = StoreCache::new(dir);
 
     let cached = cache.load_index();
+    // 缓存直返必须经过 StoreIndex::parse 校验，防止恶意缓存常驻
     if !refresh
         && let Some(c) = &cached
-        && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+        && let Ok(index) = neurolings_store::StoreIndex::parse(&c.body)
     {
         return store_index_json(&index, true);
     }
@@ -1019,36 +1020,40 @@ fn store_index_command(view: &mut RuntimeView, request: &Value) -> Value {
         .as_ref()
         .map(|c| (c.etag.clone(), c.last_modified.clone()))
         .unwrap_or_default();
-    let response = fetch_index(&url, &etag, &lm, 8000);
+    let response = fetch_index(&url, &etag, &lm, 15_000);
     if !response.ok {
-        // 网络失败时退回缓存（若有）。
+        // 网络失败时退回缓存（若有且校验通过）。
         if let Some(c) = &cached
-            && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+            && let Ok(index) = neurolings_store::StoreIndex::parse(&c.body)
         {
             let mut out = store_index_json(&index, true);
             out["warning"] = json!({ "code": response.error_code, "error": response.error });
+            // 标记 stale 与原版一致：若解析失败则视为 corrupt
+            return out;
+        }
+        // 尝试 previous 缓存
+        if let Some(prev) = cache.load_previous_index()
+            && let Ok(index) = neurolings_store::StoreIndex::parse(&prev.body)
+        {
+            let mut out = store_index_json(&index, true);
+            out["warning"] = json!({ "code": response.error_code, "error": response.error });
+            out["stale"] = json!(true);
             return out;
         }
         return error_json(&response.error, &response.error_code, 502);
     }
     if response.not_modified {
         if let Some(c) = &cached
-            && let Ok(index) = serde_json::from_slice::<neurolings_store::StoreIndex>(&c.body)
+            && let Ok(index) = neurolings_store::StoreIndex::parse(&c.body)
         {
             return store_index_json(&index, true);
         }
         return error_json("Empty store cache", "store_empty", 502);
     }
 
-    let index: neurolings_store::StoreIndex = match serde_json::from_slice(&response.body) {
+    let index = match neurolings_store::StoreIndex::parse(&response.body) {
         Ok(v) => v,
-        Err(e) => {
-            return error_json(
-                &format!("Invalid store index: {e}"),
-                "invalid_index",
-                502,
-            )
-        }
+        Err(e) => return error_json(&format!("Invalid store index: {e}"), "invalid_index", 502),
     };
     let _ = cache.save_index(&neurolings_store::CachedIndex {
         body: response.body.clone(),
@@ -1086,20 +1091,17 @@ fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
         return error_json("Storage unavailable", "storage_unavailable", 500);
     };
     let cache = StoreCache::new(&dir);
-    let Some(cached) = cache.load_index() else {
+    let Some(cached) = cache.load_index().or_else(|| cache.load_previous_index()) else {
         return error_json(
             "Store index not fetched yet; refresh first",
             "store_empty",
             409,
         );
     };
-    let index: neurolings_store::StoreIndex =
-        match serde_json::from_slice(&cached.body) {
-            Ok(v) => v,
-            Err(e) => {
-                return error_json(&format!("Invalid cached index: {e}"), "invalid_index", 500)
-            }
-        };
+    let index = match neurolings_store::StoreIndex::parse(&cached.body) {
+        Ok(v) => v,
+        Err(e) => return error_json(&format!("Invalid cached index: {e}"), "invalid_index", 500),
+    };
     let Some(entry) = index.entries.iter().find(|e| e.id == id) else {
         return error_json("No such store entry", "entry_not_found", 404);
     };
@@ -1114,13 +1116,20 @@ fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
         );
     }
 
-    let file_name = entry
-        .download
-        .url
-        .rsplit('/')
-        .next()
-        .unwrap_or("mascot.mascot")
-        .to_string();
+    // 原版命名：sanitized(id) + "-" + version + ".mascot"，避免 URL 尾段污染与重名
+    let sanitized_id = neurolings_pack::package::sanitized_package_base_name(&entry.id);
+    let sanitized_version = entry
+        .version
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let file_name = format!("{sanitized_id}-{sanitized_version}.mascot");
     let downloads = dir.join("downloads");
     let _ = std::fs::create_dir_all(&downloads);
     let destination = downloads.join(&file_name);

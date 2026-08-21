@@ -77,9 +77,7 @@ unsafe extern "system" fn wnd_proc(
                 let mascot_id = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as u64;
                 if mascot_id != 0 {
                     // 诊断：NEUROLINGS_DEBUG=1 时记录鼠标按下/松开/双击（不含移动）。
-                    if msg != WM_MOUSEMOVE
-                        && std::env::var_os("NEUROLINGS_DEBUG").is_some()
-                    {
+                    if msg != WM_MOUSEMOVE && std::env::var_os("NEUROLINGS_DEBUG").is_some() {
                         let pos = GetMessagePos();
                         let gx = (pos & 0xFFFF) as i16 as i32;
                         let gy = ((pos >> 16) & 0xFFFF) as i16 as i32;

@@ -23,10 +23,9 @@ impl Action for Look {
             .mascot
             .as_ref()
             .map(|m| m.borrow().looking_right);
-        let value = self
-            .base()
-            .vars
-            .get_bool("LookRight", current.unwrap_or(false));
+        // 未指定 LookRight 时翻转当前朝向，与原版 look.cc: !mascot->looking_right 一致
+        let fallback = !current.unwrap_or(false);
+        let value = self.base().vars.get_bool("LookRight", fallback);
         if let Some(mascot) = &self.base().mascot {
             mascot.borrow_mut().looking_right = value;
         }

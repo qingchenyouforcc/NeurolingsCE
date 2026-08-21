@@ -48,7 +48,7 @@ mod win {
         let key = open_key(REG_SAM_FLAGS(KEY_READ.0 | KEY_WRITE.0))?;
         let name = wide(APP_NAME);
         let result = if enabled {
-            let value = wide_bytes(&format!("\"{exe_path}\" --silent"));
+            let value = wide_bytes(&format!("\"{exe_path}\" --neurolingsce-startup"));
             unsafe { RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&value)) }
                 .ok()
                 .map_err(|e| PlatformError::Win32(format!("set run value: {e}")))
@@ -105,7 +105,7 @@ mod linux {
                 let _ = std::fs::create_dir_all(parent);
             }
             let entry = format!(
-                "[Desktop Entry]\nType=Application\nName={APP_NAME}\nExec=\"{exe_path}\" --silent\nX-GNOME-Autostart-enabled=true\n"
+                "[Desktop Entry]\nType=Application\nName={APP_NAME}\nExec=\"{exe_path}\" --neurolingsce-startup\nX-GNOME-Autostart-enabled=true\n"
             );
             std::fs::write(&path, entry).map_err(|e| crate::PlatformError::Win32(e.to_string()))
         } else {

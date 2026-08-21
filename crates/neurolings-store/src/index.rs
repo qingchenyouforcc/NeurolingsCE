@@ -60,31 +60,32 @@ pub struct StoreIndex {
     pub registry: String,
     #[serde(default)]
     pub generated_at: String,
-    #[serde(default)]
+    #[serde(default, alias = "mascots")]
     pub entries: Vec<StoreEntry>,
 }
 
 pub fn is_valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+    // 严格小写 hex，与原版 ^[0-9a-f]{64}$ 一致
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// 受信任的下载源：仅 GitHub 发布 CDN 或配置的注册表主机上的 https。
-pub fn is_trusted_download_url(url: &str, registry: &str) -> bool {
+/// 受信任的下载源：与原版 MascotStoreIndex::isTrustedDownloadUrl 一致
+/// - https:// 任意主机均信任
+/// - http:// 仅 localhost / 127.0.0.1 / ::1 信任（本地调试）
+pub fn is_trusted_download_url(url: &str, _registry: &str) -> bool {
     if let Some(rest) = url.strip_prefix("https://") {
         let host = rest.split('/').next().unwrap_or("");
-        if host == "github.com"
-            || host.ends_with(".githubusercontent.com")
-            || host == "objects.githubusercontent.com"
-        {
+        if !host.is_empty() {
             return true;
         }
-        if !registry.is_empty()
-            && let Some(reg_rest) = registry.strip_prefix("https://")
-        {
-            let reg_host = reg_rest.split('/').next().unwrap_or("");
-            if host == reg_host {
-                return true;
-            }
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest.split('/').next().unwrap_or("").to_ascii_lowercase();
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+            return true;
         }
     }
     false
@@ -129,8 +130,12 @@ impl StoreIndex {
     pub fn parse(bytes: &[u8]) -> Result<StoreIndex, String> {
         let mut parsed: StoreIndex = serde_json::from_slice(bytes)
             .map_err(|e| format!("Failed to parse store index: {e}"))?;
-        if parsed.schema_version <= 0 {
-            return Err("Index schema version is missing or invalid".into());
+        if parsed.schema_version != 1 {
+            return Err("Unsupported index schema version; expected 1".into());
+        }
+        // 与原版一致：generatedAt 必须有效（非空）
+        if parsed.generated_at.trim().is_empty() {
+            return Err("Index generatedAt is invalid".into());
         }
         for entry in &parsed.entries {
             let download_ok = !entry.download.url.is_empty()
