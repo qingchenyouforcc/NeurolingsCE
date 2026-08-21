@@ -18,20 +18,32 @@ class _StorePageEntry {
   final String name;
   final String version;
   final String summary;
+  final String description;
   final String license;
+  final String minimumVersion;
   final List<String> authors;
+  final List<String> tags;
+  final List<String> categories;
   final int size;
   final String iconUrl;
+  final String downloadUrl;
+  final String sha256;
 
   _StorePageEntry.fromJson(Map<String, dynamic> json)
       : id = (json['id'] as String?) ?? '',
         name = (json['name'] as String?) ?? '',
         version = (json['version'] as String?) ?? '',
         summary = (json['summary'] as String?) ?? '',
+        description = (json['description'] as String?) ?? '',
         license = (json['license'] as String?) ?? '',
+        minimumVersion = (json['minimumNeurolingsCEVersion'] as String?) ?? '',
         authors = (json['authors'] as List?)?.map((e) => e.toString()).toList() ?? [],
+        tags = (json['tags'] as List?)?.map((e) => e.toString()).toList() ?? [],
+        categories = (json['categories'] as List?)?.map((e) => e.toString()).toList() ?? [],
         size = ((json['download'] as Map?)?['size'] as num?)?.toInt() ?? -1,
-        iconUrl = ((json['icon'] as Map?)?['url'] as String?) ?? '';
+        iconUrl = ((json['icon'] as Map?)?['url'] as String?) ?? '',
+        downloadUrl = ((json['download'] as Map?)?['url'] as String?) ?? '',
+        sha256 = ((json['download'] as Map?)?['sha256'] as String?) ?? '';
 }
 
 class _StorePageState extends State<StorePage> {
@@ -42,6 +54,10 @@ class _StorePageState extends State<StorePage> {
   List<_StorePageEntry> _entries = [];
   String? _error;
   String _search = '';
+  String _selectedTag = '';
+  bool _fromCache = false;
+  String? _warning;
+  String? _installingId;
 
   @override
   void initState() {
@@ -77,10 +93,14 @@ class _StorePageState extends State<StorePage> {
       final result = await state.api
           .command({'command': 'store_index', 'refresh': refresh});
       if (!mounted) return;
-      final list = result['entries'];
+      final list = result['entries'] ?? result['mascots'];
+      final fromCache = result['from_cache'] == true;
+      final warning = result['warning'] is Map ? (result['warning']['error']?.toString()) : null;
       setState(() {
         _configured = true;
         _indexUrl = url;
+        _fromCache = fromCache;
+        _warning = warning;
         _entries = list is List
             ? list
                 .whereType<Map<String, dynamic>>()
@@ -98,8 +118,44 @@ class _StorePageState extends State<StorePage> {
     }
   }
 
+  Future<void> _showDetail(_StorePageEntry entry) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: Text(entry.name),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${entry.id}  ·  v${entry.version}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B6B6B))),
+              const SizedBox(height: 8),
+              if (entry.summary.isNotEmpty) Text(entry.summary),
+              if (entry.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(entry.description, style: const TextStyle(fontSize: 13))),
+              const SizedBox(height: 12),
+              Wrap(spacing: 6, children: [
+                if (entry.license.isNotEmpty) _chip('License: ${entry.license}'),
+                if (entry.minimumVersion.isNotEmpty) _chip('最低版本: ${entry.minimumVersion}'),
+                if (entry.size >= 0) _chip(_formatSize(entry.size)),
+              ]),
+              if (entry.authors.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text('作者: ${entry.authors.join(', ')}', style: const TextStyle(fontSize: 12))),
+              if (entry.tags.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('标签: ${entry.tags.join(', ')}', style: const TextStyle(fontSize: 12))),
+              if (entry.categories.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('分类: ${entry.categories.join(', ')}', style: const TextStyle(fontSize: 12))),
+              if (entry.sha256.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: SelectableText('SHA256: ${entry.sha256}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace'))),
+            ]),
+          ),
+        ),
+        actions: [
+          Button(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+          FilledButton(onPressed: () { Navigator.pop(ctx); _install(entry); }, child: const Text('安装')),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(String label) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: const Color(0xFFF3F3F3), borderRadius: BorderRadius.circular(12)), child: Text(label, style: const TextStyle(fontSize: 11)));
+
   Future<void> _install(_StorePageEntry entry) async {
-    setState(() => _installing = true);
+    setState(() { _installing = true; _installingId = entry.id; });
     try {
       final state = context.read<AppState>();
       final result =
@@ -134,7 +190,7 @@ class _StorePageState extends State<StorePage> {
         );
       });
     } finally {
-      if (mounted) setState(() => _installing = false);
+      if (mounted) setState(() { _installing = false; _installingId = null; });
     }
   }
 
@@ -145,13 +201,28 @@ class _StorePageState extends State<StorePage> {
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 
+  List<String> get _allTags {
+    final set = <String>{};
+    for (final e in _entries) {
+      set.addAll(e.tags);
+      set.addAll(e.categories);
+    }
+    final list = set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
   List<_StorePageEntry> get _filtered {
     final query = _search.trim().toLowerCase();
-    if (query.isEmpty) return _entries;
+    final terms = query.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
     return _entries.where((e) {
-      return e.name.toLowerCase().contains(query) ||
-          e.summary.toLowerCase().contains(query) ||
-          e.authors.any((a) => a.toLowerCase().contains(query));
+      if (_selectedTag.isNotEmpty) {
+        final tagLower = _selectedTag.toLowerCase();
+        final hasTag = e.tags.any((t) => t.toLowerCase() == tagLower) || e.categories.any((c) => c.toLowerCase() == tagLower);
+        if (!hasTag) return false;
+      }
+      if (terms.isEmpty) return true;
+      final haystack = '${e.name} ${e.summary} ${e.id} ${e.authors.join(' ')}'.toLowerCase();
+      return terms.every((term) => haystack.contains(term));
     }).toList();
   }
 
@@ -238,13 +309,29 @@ class _StorePageState extends State<StorePage> {
             ),
           )
         else ...[
+          // 状态条 + 标签筛选
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(children: [
+              Expanded(child: Text('${_filtered.length} 个桌宠${_selectedTag.isNotEmpty ? ' · 标签: $_selectedTag' : ''}${_fromCache ? ' · 来自缓存' : ''}', style: FluentTheme.of(context).typography.caption)),
+              if (_warning != null) Icon(FluentIcons.warning, size: 14, color: Colors.orange),
+            ]),
+          ),
+          if (_warning != null)
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: InfoBar(title: const Text('缓存警告'), content: Text(_warning!), severity: InfoBarSeverity.warning)),
           if (_entries.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextBox(
-                placeholder: '搜索名称、简介或作者...',
-                onChanged: (value) => setState(() => _search = value),
-              ),
+              child: Row(children: [
+                Expanded(child: TextBox(placeholder: '搜索名称、简介、ID或作者...', onChanged: (value) => setState(() => _search = value))),
+                const SizedBox(width: 8),
+                ComboBox<String>(
+                  value: _selectedTag.isEmpty ? '' : _selectedTag,
+                  placeholder: const Text('全部标签'),
+                  items: [const ComboBoxItem(value: '', child: Text('全部标签')), ..._allTags.map((t) => ComboBoxItem(value: t, child: Text(t)))],
+                  onChanged: (v) => setState(() => _selectedTag = v ?? ''),
+                ),
+              ]),
             ),
           if (_filtered.isEmpty)
             Card(
@@ -299,13 +386,36 @@ class _StorePageState extends State<StorePage> {
                           style: FluentTheme.of(context).typography.caption,
                         ),
                       ]),
-                  trailing: FilledButton(
-                    onPressed: _installing ? null : () => _install(entry),
-                    child: const Text('安装'),
-                  ),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Button(onPressed: () => _showDetail(entry), child: const Text('详情')),
+                    const SizedBox(width: 6),
+                    _installingId == entry.id
+                        ? const SizedBox(width: 24, height: 24, child: ProgressRing(strokeWidth: 2))
+                        : FilledButton(
+                            onPressed: _installing ? null : () => _install(entry),
+                            child: const Text('安装'),
+                          ),
+                  ]),
+                  onPressed: () => _showDetail(entry),
                 ),
               ),
             ),
+          // GitHub 登录占位
+          Card(
+            margin: const EdgeInsets.all(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [const Icon(FluentIcons.accounts, size: 20), const SizedBox(width: 8), Text('GitHub 登录', style: FluentTheme.of(context).typography.bodyStrong)]),
+                const SizedBox(height: 8),
+                const Text('登录后可投稿、收藏，建议通过 NEUROLINGSCE_MASCOT_INDEX_URL 配置私有索引。', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 8),
+                Button(onPressed: () => displayInfoBar(context, builder: (c, close) => const InfoBar(title: Text('GitHub 登录 UI 正在接入'), content: Text('后端已实现 Device Flow，UI 接线进行中'), severity: InfoBarSeverity.info)), child: const Text('使用 GitHub 登录')),
+                const SizedBox(height: 4),
+                Button(onPressed: () => displayInfoBar(context, builder: (c, close) => const InfoBar(title: Text('投稿功能'), content: Text('后端 SubmissionClient 已就绪，UI 表单待补'), severity: InfoBarSeverity.info)), child: const Text('投稿新桌宠')),
+              ]),
+            ),
+          ),
         ],
       ],
     );
