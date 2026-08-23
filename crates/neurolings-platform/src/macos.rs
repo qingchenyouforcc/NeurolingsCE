@@ -307,3 +307,188 @@ impl Drop for MacOSWindow {
         self.window.orderOut(None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 系统托盘（NSStatusItem）：菜单项点击进入命令队列，主循环轮询取出。
+// ---------------------------------------------------------------------------
+
+pub mod tray {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use objc2::rc::Retained;
+    use objc2::runtime::Sel;
+    use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
+    use objc2_app_kit::{NSBitmapImageRep, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem};
+    use objc2_foundation::{NSObject, NSString};
+
+    /// 托盘命令队列（菜单点击写入，poll 取出）。
+    static COMMAND_QUEUE: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+    /// NSStatusItem 不是 Send/Sync：托盘只在主线程使用，包装后声明安全。
+    struct SendStatusItem(Retained<NSStatusItem>);
+    unsafe impl Send for SendStatusItem {}
+    unsafe impl Sync for SendStatusItem {}
+
+    /// 托盘图标引用（保持存活）。
+    static STATUS_ITEM: Mutex<Option<SendStatusItem>> = Mutex::new(None);
+
+    /// 菜单项 target 的实例变量（持有命令名）。
+    struct TargetIvars {
+        command: std::cell::RefCell<String>,
+    }
+
+    define_class!(
+        #[unsafe(super = NSObject)]
+        #[name = "NeurolingsTrayTarget"]
+        #[ivars = TargetIvars]
+        struct TrayTarget;
+
+        impl TrayTarget {
+            #[unsafe(method(onMenuAction:))]
+            fn on_menu_action(&self, _sender: Option<&NSObject>) {
+                let command = self.ivars().command.borrow().clone();
+                if let Ok(mut queue) = COMMAND_QUEUE.lock() {
+                    queue.push_back(command);
+                }
+            }
+        }
+    );
+
+    impl TrayTarget {
+        fn new(command: &str) -> Retained<Self> {
+            let this = Self::alloc().set_ivars(TargetIvars {
+                command: std::cell::RefCell::new(command.to_string()),
+            });
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    /// 创建/初始化托盘图标与初始菜单。
+    pub fn tray_init(tooltip: &str, rgba: &[u8], width: u32, height: u32) -> bool {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return false;
+        };
+        let bar = NSStatusBar::systemStatusBar();
+        let item = bar.statusItemWithLength(-1.0); // NSVariableStatusItemLength
+        if let Some(button) = item.button(mtm) {
+            button.setToolTip(Some(&NSString::from_str(tooltip)));
+            if width > 0 && height > 0 {
+                let bytes_per_row = (width * 4) as isize;
+                let mut planes = [rgba.as_ptr() as *mut u8];
+                let rep = unsafe {
+                    NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+                        NSBitmapImageRep::alloc(),
+                        planes.as_mut_ptr(),
+                        width as isize,
+                        height as isize,
+                        8,
+                        4,
+                        true,
+                        false,
+                        objc2_app_kit::NSDeviceRGBColorSpace,
+                        bytes_per_row,
+                        32,
+                    )
+                };
+                if let Some(rep) = rep {
+                    let image = NSImage::initWithSize(
+                        NSImage::alloc(),
+                        objc2_foundation::NSSize::new(width as f64, height as f64),
+                    );
+                    image.addRepresentation(&rep);
+                    button.setImage(Some(&image));
+                }
+            }
+        }
+        if let Ok(mut slot) = STATUS_ITEM.lock() {
+            *slot = Some(SendStatusItem(item));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 重建托盘菜单（条目：toggle/spawn 子菜单/kill_all/quit + 本地化文本）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn tray_set_menu(
+        toggle_text: &str,
+        spawn_text: &str,
+        none_text: &str,
+        kill_all_text: &str,
+        quit_text: &str,
+        spawn_names: &[String],
+    ) {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return;
+        };
+        let menu = NSMenu::new(mtm);
+        append_item(&menu, "toggle_manager", toggle_text, true);
+        let spawn_menu = NSMenu::new(mtm);
+        if spawn_names.is_empty() {
+            append_item_to(&spawn_menu, "none", none_text, false);
+        } else {
+            let mut sorted = spawn_names.to_vec();
+            sorted.sort_by_key(|n| n.to_lowercase());
+            for name in sorted {
+                append_item_to(&spawn_menu, &format!("spawn:{name}"), &name, true);
+            }
+        }
+        let submenu = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(spawn_text),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        submenu.setSubmenu(Some(&spawn_menu));
+        menu.addItem(&submenu);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        append_item(&menu, "close_all", kill_all_text, true);
+        append_item(&menu, "quit", quit_text, true);
+        if let Ok(slot) = STATUS_ITEM.lock()
+            && let Some(item) = slot.as_ref()
+        {
+            item.0.setMenu(Some(&menu));
+        }
+    }
+
+    fn append_item(menu: &NSMenu, command: &str, title: &str, enabled: bool) {
+        append_item_to(menu, command, title, enabled);
+    }
+
+    fn append_item_to(menu: &NSMenu, command: &str, title: &str, enabled: bool) {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return;
+        };
+        let item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(title),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        let target = TrayTarget::new(command);
+        unsafe {
+            let _: () = msg_send![&*item, setTarget: Some(&*target)];
+            let _: () = msg_send![&*item, setAction: objc2::sel!(onMenuAction:)];
+        }
+        // target 由菜单项持有引用，主动保持存活。
+        std::mem::forget(target);
+        item.setEnabled(enabled);
+        menu.addItem(&item);
+    }
+
+    /// 取出一个待处理托盘命令（无则返回 None）。
+    pub fn tray_poll() -> Option<String> {
+        COMMAND_QUEUE.lock().ok().and_then(|mut q| q.pop_front())
+    }
+
+    /// 左键单击托盘图标（macOS：默认行为已弹菜单，与原版一致无需额外处理）。
+    pub fn tray_remove() {
+        if let Ok(mut slot) = STATUS_ITEM.lock() {
+            *slot = None;
+        }
+    }
+}

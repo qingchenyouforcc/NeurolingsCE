@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -72,11 +73,37 @@ class ApiException implements Exception {
 }
 
 /// Client for the runtime HTTP API (docs/HTTP-API.md).
+///
+/// 端口发现：优先 Manager 私有管理端口（runtime 拉起时经
+/// NEUROLINGSCE_MANAGER_PORT 环境变量告知，默认 32457，常开），
+/// 失败回退公开 API 端口 32456（由 http/enabled 设置控制）。
 class RuntimeApi {
   final http.Client _client = http.Client();
+  late final List<int> _ports;
+  int _portIndex = 0;
 
-  Uri _uri(String path, [Map<String, String>? query]) =>
-      Uri.parse('$apiBase$path').replace(queryParameters: query);
+  RuntimeApi() {
+    final envPort =
+        int.tryParse(Platform.environment['NEUROLINGSCE_MANAGER_PORT'] ?? '');
+    _ports = [
+      if (envPort != null && envPort > 0) envPort,
+      32457,
+      32456,
+    ];
+  }
+
+  int get _port => _ports[_portIndex];
+
+  bool _nextPort() {
+    if (_portIndex < _ports.length - 1) {
+      _portIndex++;
+      return true;
+    }
+    return false;
+  }
+
+  Uri _uri(String path, [Map<String, String>? query]) => Uri.parse(
+      'http://127.0.0.1:$_port/shijima/api/v1$path').replace(queryParameters: query);
 
   Map<String, dynamic> _decode(http.Response response) {
     final body = response.body.trim();
@@ -94,15 +121,22 @@ class RuntimeApi {
   }
 
   Future<bool> ping() async {
-    try {
-      final response =
-          await _client.get(_uri('/ping')).timeout(const Duration(milliseconds: 600));
-      if (response.statusCode != 200) return false;
-      final decoded = jsonDecode(response.body);
-      return decoded is Map && decoded['ok'] == true;
-    } catch (_) {
-      return false;
+    for (var i = _portIndex; i < _ports.length; i++) {
+      _portIndex = i;
+      try {
+        final response = await _client
+            .get(_uri('/ping'))
+            .timeout(const Duration(milliseconds: 600));
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map && decoded['ok'] == true) return true;
+        }
+      } catch (_) {
+        // 尝试下一个候选端口。
+      }
     }
+    _portIndex = 0;
+    return false;
   }
 
   Future<List<LoadedMascot>> loadedMascots() async {
@@ -158,12 +192,21 @@ class RuntimeApi {
 
   /// Sends an arbitrary command through POST /command (runtime extension).
   Future<Map<String, dynamic>> command(Map<String, dynamic> payload) async {
-    final response = await _client.post(
-      _uri('/command'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload),
-    );
-    return _decode(response);
+    try {
+      final response = await _client.post(
+        _uri('/command'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+      return _decode(response);
+    } on SocketException {
+      // 当前端口不可达时切换候选端口重试一次。
+      if (_nextPort()) return command(payload);
+      rethrow;
+    } on TimeoutException {
+      if (_nextPort()) return command(payload);
+      rethrow;
+    }
   }
 
   void close() => _client.close();

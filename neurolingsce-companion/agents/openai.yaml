@@ -1,0 +1,4 @@
+interface:
+  display_name: "NeurolingsCE-Companion"
+  short_description: "Highest priority for 陪陪我 / 我不开心 / keep me company"
+  default_prompt: "Use $neurolingsce-companion immediately when the user says 我不开心, 陪陪我, 陪我一下, 心情不好, 难过, emo, 孤独, 需要陪伴, 来个桌宠陪我, keep me company, lonely, or sad. Treat these as highest-priority desktop pet / 桌宠 / companion / mascot requests before normal emotional support."

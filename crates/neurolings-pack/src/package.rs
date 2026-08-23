@@ -377,6 +377,39 @@ pub fn validate_package(package_path: &Path) -> MascotPackageReport {
         return report;
     }
 
+    // rar/7z/tar/tgz：解压到受控临时目录并重打包为临时 zip，
+    // 使后续校验统一走 zip 路径（与原版 unarr 任意归档的行为一致）。
+    let extension = package_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    // 解压目录与重打包文件分别放独立临时目录，避免 walk 自包含。
+    let mut _tempdir_guard: Option<(tempfile::TempDir, tempfile::TempDir)> = None;
+    let mut effective_path = package_path.to_path_buf();
+    if matches!(extension.as_str(), "rar" | "7z" | "tar" | "tgz") {
+        let (Ok(extract_dir), Ok(repacked_dir)) = (tempfile::tempdir(), tempfile::tempdir()) else {
+            report
+                .errors
+                .push("Could not create temp directory".to_string());
+            return report;
+        };
+        if let Err(error) =
+            crate::legacy::extract_to_tempdir(package_path, extract_dir.path(), &extension)
+        {
+            report.errors.push(error.to_string());
+            return report;
+        }
+        let repacked = repacked_dir.path().join("repacked.zip");
+        if let Err(error) = repack_dir_to_zip(extract_dir.path(), &repacked) {
+            report.errors.push(error.to_string());
+            return report;
+        }
+        effective_path = repacked;
+        _tempdir_guard = Some((extract_dir, repacked_dir));
+    }
+    let package_path = effective_path.as_path();
+
     let raw_entries = match zipio::open_zip(package_path)
         .and_then(|mut archive| zipio::read_raw_archive_entries(&mut archive))
     {
@@ -873,4 +906,38 @@ pub fn migrate_legacy_directories(storage_path: &Path) {
         }
         let _ = fs::rename(&temp_package, &dir_path);
     }
+}
+
+/// 把目录树重打包为未压缩的内存 zip（rar/7z 校验路径用）。
+fn repack_dir_to_zip(dir: &Path, zip_path: &Path) -> std::result::Result<(), String> {
+    use std::io::Write;
+    let file =
+        std::fs::File::create(zip_path).map_err(|e| format!("Could not create temp zip: {e}"))?;
+    let mut writer = zip::ZipWriter::new(std::io::BufWriter::new(file));
+    for entry in walkdir::WalkDir::new(dir).follow_links(false) {
+        let entry = entry.map_err(|e| format!("walk error: {e}"))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(dir)
+            .map_err(|_| "invalid archive layout".to_string())?;
+        let name = rel.to_string_lossy().replace('\\', "/");
+        writer
+            .start_file(
+                name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .map_err(|e| format!("zip write error: {e}"))?;
+        let data = std::fs::read(entry.path()).map_err(|e| format!("read error: {e}"))?;
+        writer
+            .write_all(&data)
+            .map_err(|e| format!("zip write error: {e}"))?;
+    }
+    writer
+        .finish()
+        .map_err(|e| format!("zip finish error: {e}"))?;
+    Ok(())
 }

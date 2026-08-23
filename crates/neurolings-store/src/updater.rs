@@ -134,11 +134,42 @@ pub fn decide(current_version: &str, manifest: &UpdateManifest) -> UpdateDecisio
 
 /// 从 url 拉取清单（感知 ETag）并返回。
 pub fn fetch_manifest(url: &str, timeout_ms: u64) -> Result<UpdateManifest, String> {
-    let response = network::fetch_index(url, "", "", timeout_ms);
-    if !response.ok {
-        return Err(format!("{}: {}", response.error_code, response.error));
-    }
-    parse_manifest(&response.body)
+    fetch_manifest_with_proxy(url, timeout_ms, None)
+}
+
+/// 带代理设置的清单拉取（对齐原版更新流量代理语义）。
+pub fn fetch_manifest_with_proxy(
+    url: &str,
+    timeout_ms: u64,
+    proxy: Option<&network::ProxySpec>,
+) -> Result<UpdateManifest, String> {
+    let agent = proxy.and_then(|spec| spec.agent());
+    let body = match agent {
+        Some(agent) => {
+            let response = agent
+                .get(url)
+                .timeout(std::time::Duration::from_millis(timeout_ms))
+                .set("Accept", "application/json")
+                .call();
+            match response {
+                Ok(resp) => {
+                    let mut body = Vec::new();
+                    std::io::Read::read_to_end(&mut resp.into_reader(), &mut body)
+                        .map_err(|_| "read_failed: could not read manifest body".to_string())?;
+                    body
+                }
+                Err(e) => return Err(format!("network_error: {e}")),
+            }
+        }
+        None => {
+            let response = network::fetch_index(url, "", "", timeout_ms);
+            if !response.ok {
+                return Err(format!("{}: {}", response.error_code, response.error));
+            }
+            response.body
+        }
+    };
+    parse_manifest(&body)
 }
 
 /// 下载资产到 destination 并校验 SHA-256；清单声明的校验和
@@ -148,7 +179,39 @@ pub fn download_update(
     destination: &std::path::Path,
     timeout_ms: u64,
 ) -> Result<(), String> {
-    network::download(&asset.url, destination, &asset.sha256, timeout_ms)
+    download_update_with_proxy(asset, destination, timeout_ms, None)
+}
+
+/// 带代理设置的资产下载（SHA-256 校验后写入目标路径）。
+pub fn download_update_with_proxy(
+    asset: &UpdateAsset,
+    destination: &std::path::Path,
+    timeout_ms: u64,
+    proxy: Option<&network::ProxySpec>,
+) -> Result<(), String> {
+    match proxy.and_then(|spec| spec.agent()) {
+        Some(agent) => {
+            let response = agent
+                .get(&asset.url)
+                .timeout(std::time::Duration::from_millis(timeout_ms))
+                .call()
+                .map_err(|e| format!("network_error: {e}"))?;
+            let mut body = Vec::new();
+            std::io::Read::read_to_end(&mut response.into_reader(), &mut body)
+                .map_err(|_| "read_failed: could not read asset body".to_string())?;
+            if !asset.sha256.is_empty() {
+                let hex = network::sha256_bytes(&body);
+                if !hex.eq_ignore_ascii_case(&asset.sha256) {
+                    return Err(format!(
+                        "sha256_mismatch: expected {}, got {}",
+                        asset.sha256, hex
+                    ));
+                }
+            }
+            std::fs::write(destination, &body).map_err(|e| format!("write_failed: {e}"))
+        }
+        None => network::download(&asset.url, destination, &asset.sha256, timeout_ms),
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:neurolings_manager/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -8,7 +11,10 @@ import 'package:provider/provider.dart';
 import '../api/runtime_api.dart';
 import '../state/app_state.dart';
 
-/// Home: runtime status, installed templates (spawn), running mascots (dismiss).
+/// 主页：桌宠库（对齐原版 ManagerHomePage）。
+/// 动作条 Spawn Random / Import / Refresh / Show Folder；
+/// 左侧库列表（64px 预览、tooltip、Enter/双击召唤、多选），
+/// 右侧 Details 面板（96×96 预览 + 元数据 + Delete Selected）。
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -17,257 +23,377 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppState>().refresh();
+  /// 选中的模板名集合（多选，ExtendedSelection 语义）。
+  final Set<String> _selected = {};
+  /// 模板 id → 预览 PNG 字节缓存。
+  final Map<int, Uint8ListAware> _previews = {};
+
+  bool _isSelected(String name) => _selected.contains(name);
+
+  void _toggle(String name, bool selected) {
+    setState(() {
+      if (selected) {
+        _selected.add(name);
+      } else {
+        _selected.remove(name);
+      }
     });
+  }
+
+  Future<void> _spawnRandom() async {
+    final state = context.read<AppState>();
+    if (state.templates.isEmpty) return;
+    final pick = state.templates[Random().nextInt(state.templates.length)];
+    await state.spawn(pick.name);
+  }
+
+  Future<void> _import() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip', 'mascot'],
+      allowMultiple: true,
+      dialogTitle: AppLocalizations.of(context).importButton,
+    );
+    if (picked == null) return;
+    final files = picked.files.map((f) => f.path).whereType<String>().toList();
+    if (files.isEmpty) return;
+    final l10n = AppLocalizations.of(context);
+    for (final path in files) {
+      final output = await context.read<AppState>().importArchive(path);
+      if (!mounted) return;
+      displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+          title: Text(output.startsWith('{') || output.contains('imported')
+              ? l10n.homeImportDone
+              : l10n.error),
+          content: Text(output),
+          severity: output.contains('imported') || output.startsWith('{')
+              ? InfoBarSeverity.success
+              : InfoBarSeverity.error,
+          action: IconButton(icon: const Icon(FluentIcons.clear), onPressed: close),
+        );
+      });
+    }
+  }
+
+  Future<void> _showFolder() async {
+    final home =
+        Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+    if (Platform.isWindows) {
+      final local = Platform.environment['LOCALAPPDATA'] ?? home;
+      await Process.run('explorer', ['$local\\NeurolingsCE\\mascots']);
+    }
+  }
+
+  Future<void> _spawnByName(String name) async {
+    await context.read<AppState>().spawn(name);
+  }
+
+  /// 拉取模板预览图（runtime preview_png，128×128 PNG）。
+  Future<void> _loadPreview(int id) async {
+    if (_previews.containsKey(id)) return;
+    try {
+      final result = await context.read<AppState>().api
+          .command({'command': 'preview_png', 'id': id});
+      final base64Text = result['preview_base64'] as String?;
+      if (base64Text != null) {
+        final bytes = base64Decode(base64Text);
+        if (mounted) {
+          setState(() => _previews[id] = Uint8ListAware(bytes));
+        }
+      }
+    } catch (_) {
+      // 预览缺失时保持占位。
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    final l10n = AppLocalizations.of(context);
+    final state = context.read<AppState>();
+    // 内置默认模板不可删除（对齐原版 deletable()==false）。
+    final deletable =
+        _selected.where((name) => name != '@').toList();
+    if (deletable.isEmpty) return;
+    final shown = deletable.take(5).join(', ');
+    final more = deletable.length > 5
+        ? '\n${l10n.homeAndMore(deletable.length - 5)}'
+        : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        title: Text(l10n.deleteSelected),
+        content: Text('${l10n.homeDeleteConfirm(deletable.length)}\n\n$shown$more'),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(l10n.delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    for (final name in deletable) {
+      try {
+        await state.api.command({
+          'command': 'remove_mascot_template',
+          'mascot_name': name,
+        });
+      } catch (e) {
+        if (!mounted) return;
+        displayInfoBar(context, builder: (ctx, close) {
+          return InfoBar(
+            title: Text(l10n.error),
+            content: Text('$name: $e'),
+            severity: InfoBarSeverity.error,
+          );
+        });
+      }
+    }
+    setState(() => _selected.clear());
+    await state.refresh();
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return Consumer<AppState>(
-      builder: (context, state, _) {
-        return ScaffoldPage.scrollable(
-          header: PageHeader(title: Text(l10n.navHome)),
-          children: [
-            _HomeActionBar(state: state),
-            const SizedBox(height: 12),
-            _RuntimeStatusCard(state: state, l10n: l10n),
-            const SizedBox(height: 8),
-            _StatusBar(state: state),
-            const SizedBox(height: 16),
-            _InstalledSection(state: state, l10n: l10n),
-            const SizedBox(height: 24),
-            _RunningSection(state: state, l10n: l10n),
-          ],
-        );
-      },
-    );
-  }
-}
+    final state = context.watch<AppState>();
+    final templates = state.templates;
+    final selectedTemplate = _selected.length == 1
+        ? templates.where((t) => t.name == _selected.first).firstOrNull
+        : null;
 
-class _HomeActionBar extends StatelessWidget {
-  const _HomeActionBar({required this.state});
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(spacing: 8, runSpacing: 8, children: [
-      FilledButton(
-        onPressed: state.templates.isEmpty ? null : () {
-          final rnd = Random();
-          final pick = state.templates[rnd.nextInt(state.templates.length)];
-          state.spawn(pick.name);
-        },
-        child: const Text('随机召唤'),
-      ),
-      Button(
-        onPressed: () async {
-          // 触发文件选择导入（复用 AppState.importArchive 的 CLI 路径）
-          // 简化：提示用户到“创建”页导入
-          displayInfoBar(context, builder: (ctx, close) => const InfoBar(title: Text('请到“创建”页导入桌宠包'), severity: InfoBarSeverity.info));
-        },
-        child: const Text('导入'),
-      ),
-      Button(
-        onPressed: state.busy ? null : () => state.refresh(),
-        child: const Text('刷新'),
-      ),
-      Button(
-        onPressed: () async {
-          final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
-          final path = Platform.isWindows ? '${Platform.environment['LOCALAPPDATA'] ?? home}\\NeurolingsCE\\mascots' : '$home/.local/share/NeurolingsCE/mascots';
-          try {
-            if (Platform.isWindows) {
-              await Process.run('explorer', [path]);
-            } else if (Platform.isMacOS) {
-              await Process.run('open', [path]);
-            } else {
-              await Process.run('xdg-open', [path]);
-            }
-          } catch (e) {
-            if (!context.mounted) return;
-            displayInfoBar(context, builder: (ctx, c) => InfoBar(title: Text(e.toString()), severity: InfoBarSeverity.error));
-          }
-        },
-        child: const Text('打开文件夹'),
-      ),
-    ]);
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  const _StatusBar({required this.state});
-  final AppState state;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(color: FluentTheme.of(context).cardColor, borderRadius: BorderRadius.circular(4)),
-      child: Row(children: [
-        Text('桌宠: ${state.running.length} | 模板: ${state.templates.length}', style: FluentTheme.of(context).typography.caption),
-        const Spacer(),
-        if (state.lastError != null) Expanded(child: Text(state.lastError!, style: TextStyle(color: Colors.red, fontSize: 12), overflow: TextOverflow.ellipsis)),
-      ]),
-    );
-  }
-}
-
-class _RuntimeStatusCard extends StatelessWidget {
-  const _RuntimeStatusCard({required this.state, required this.l10n});
-
-  final AppState state;
-  final AppLocalizations l10n;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Row(children: [
-        Icon(
-          state.runtimeOnline ? FluentIcons.check_mark : FluentIcons.warning,
-          color: state.runtimeOnline ? Colors.green : Colors.orange,
+    return ScaffoldPage.scrollable(
+      header: PageHeader(
+        title: Text(l10n.appTitle),
+        commandBar: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            FilledButton(
+              onPressed: templates.isEmpty ? null : _spawnRandom,
+              child: Text(l10n.spawnRandom),
+            ),
+            const SizedBox(width: 8),
+            Button(onPressed: _import, child: Text(l10n.importButton)),
+            const SizedBox(width: 8),
+            Button(
+              onPressed: () => state.refresh(),
+              child: Text(l10n.refresh),
+            ),
+            const SizedBox(width: 8),
+            Button(onPressed: _showFolder, child: Text(l10n.showFolder)),
+          ]),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            state.runtimeOnline ? l10n.runtimeOnline : l10n.runtimeOffline,
-            style: FluentTheme.of(context).typography.bodyStrong,
-          ),
-        ),
-        if (!state.runtimeOnline)
-          FilledButton(
-            onPressed: state.busy ? null : () => state.startRuntime(),
-            child: Text(l10n.startRuntime),
-          ),
-        IconButton(
-          icon: const Icon(FluentIcons.refresh),
-          onPressed: state.busy ? null : () => state.refresh(),
-        ),
-      ]),
-    );
-  }
-}
-
-class _InstalledSection extends StatelessWidget {
-  const _InstalledSection({required this.state, required this.l10n});
-
-  final AppState state;
-  final AppLocalizations l10n;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(l10n.loadedMascots, style: FluentTheme.of(context).typography.subtitle),
-      const SizedBox(height: 8),
-      if (!state.runtimeOnline)
-        Text(l10n.runtimeOffline, style: FluentTheme.of(context).typography.caption)
-      else if (state.templates.isEmpty)
-        Text(l10n.noTemplates, style: FluentTheme.of(context).typography.caption)
-      else if (state.templates.isEmpty)
-        Card(child: Column(children: [
-          Text('暂无模板', style: FluentTheme.of(context).typography.body),
-          const SizedBox(height: 8),
-          const Text('到“创建”页导入 .mascot / .zip 包'),
-        ]))
-      else
-        ...state.templates.map(
-          (template) => Card(
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(children: [
-              // 预览占位 64x64
-              Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey[30], borderRadius: BorderRadius.circular(4)), child: const Icon(FluentIcons.photo2, size: 24)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(template.name,
-                      style: FluentTheme.of(context).typography.bodyStrong),
-                  if (template.description.isNotEmpty)
-                    Text(template.description,
-                        style: FluentTheme.of(context).typography.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                  Text('v${template.version}${template.author.isNotEmpty ? ' · ${template.author}' : ''}', style: FluentTheme.of(context).typography.caption),
-                ]),
-              ),
+      ),
+      children: [
+        if (templates.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(children: [
+              const Icon(FluentIcons.people, size: 48),
+              const SizedBox(height: 12),
+              Text(l10n.noTemplates,
+                  style: FluentTheme.of(context).typography.subtitle),
+              const SizedBox(height: 4),
+              Text(l10n.noTemplatesHint,
+                  style: FluentTheme.of(context).typography.caption),
+              const SizedBox(height: 12),
               FilledButton(
-                onPressed: () => state.spawn(template.name),
-                child: Text(l10n.spawn),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(FluentIcons.delete),
-                onPressed: () async {
-                  final ok = await showDialog<bool>(context: context, builder: (ctx) => ContentDialog(title: const Text('删除模板'), content: Text('确定删除 ${template.name}？'), actions: [Button(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除'))]));
-                  if (ok != true) return;
-                  try {
-                    final api = RuntimeApi();
-                    await api.command({'command': 'remove_mascot_template', 'mascot_name': template.name});
-                    if (!context.mounted) return;
-                    displayInfoBar(context, builder: (c, close) => InfoBar(title: Text('已删除 ${template.name}'), severity: InfoBarSeverity.success));
-                    state.refresh();
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    displayInfoBar(context, builder: (c, close) => InfoBar(title: Text(e.toString()), severity: InfoBarSeverity.error));
-                  }
-                },
+                onPressed: _import,
+                child: Text(l10n.importMascot),
               ),
             ]),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 640;
+              final library = _libraryList(context, templates);
+              final details = _detailsPanel(context, selectedTemplate, state);
+              if (wide) {
+                return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(flex: 3, child: library),
+                  const SizedBox(width: 10),
+                  Expanded(flex: 2, child: details),
+                ]);
+              }
+              return Column(children: [
+                library,
+                const SizedBox(height: 8),
+                details,
+              ]);
+            }),
           ),
+      ],
+    );
+  }
+
+  Widget _libraryList(BuildContext context, List<LoadedMascot> templates) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(l10n.loadedMascots,
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          ...templates.map((template) {
+            _loadPreview(template.id);
+            final preview = _previews[template.id];
+            final tooltip =
+                '${template.name}\nVersion: ${template.version}\nAuthor: ${template.author}';
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: HoverButton(
+                onPressed: () => _spawnByName(template.name),
+                onLongPress: () => _toggle(template.name, !_isSelected(template.name)),
+                builder: (context, hover) => Container(
+                  decoration: BoxDecoration(
+                    color: _isSelected(template.name)
+                        ? FluentTheme.of(context)
+                            .accentColor
+                            .withValues(alpha: 0.15)
+                        : hover.isHovered
+                            ? FluentTheme.of(context)
+                                .resources
+                                .controlFillColorDefault
+                            : Colors.transparent,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  child: Row(children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        color: FluentTheme.of(context)
+                            .resources
+                            .controlFillColorSecondary,
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: preview == null
+                          ? const Icon(FluentIcons.image_pixel, size: 24)
+                          : Image.memory(preview.bytes,
+                              fit: BoxFit.contain, filterQuality: FilterQuality.medium),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Tooltip(
+                        message: tooltip,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(template.name,
+                                style: FluentTheme.of(context)
+                                    .typography
+                                    .bodyStrong),
+                            if (template.version.isNotEmpty)
+                              Text('v${template.version}',
+                                  style:
+                                      FluentTheme.of(context).typography.caption),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Checkbox(
+                      checked: _isSelected(template.name),
+                      onChanged: (v) => _toggle(template.name, v ?? false),
+                    ),
+                  ]),
+                ),
+              ),
+            );
+          }),
+        ]),
+      ),
+    );
+  }
+
+  Widget _detailsPanel(
+      BuildContext context, LoadedMascot? template, AppState state) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (template == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(l10n.homeSelectTemplate,
+                    style: FluentTheme.of(context).typography.body),
+              ),
+            )
+          else ...[
+            Center(
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: FluentTheme.of(context)
+                      .resources
+                      .controlFillColorSecondary,
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _previews[template.id] == null
+                    ? const Icon(FluentIcons.image_pixel, size: 32)
+                    : Image.memory(_previews[template.id]!.bytes,
+                        fit: BoxFit.contain),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Center(
+              child: Text(template.name,
+                  style: FluentTheme.of(context).typography.subtitle),
+            ),
+            const SizedBox(height: 12),
+            _metaRow(l10n.version, template.version),
+            _metaRow(l10n.author, template.author),
+            const SizedBox(height: 4),
+            Text(l10n.description,
+                style: FluentTheme.of(context).typography.bodyStrong),
+            const SizedBox(height: 4),
+            Text(template.description.isEmpty ? '-' : template.description,
+                style: FluentTheme.of(context).typography.caption),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: Button(
+                onPressed: _selected.any((n) => n != '@') ? _deleteSelected : null,
+                child: Text(l10n.deleteSelected),
+              ),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _metaRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(
+          width: 80,
+          child: Text(label, style: FluentTheme.of(context).typography.caption),
         ),
-    ]);
+        Expanded(
+          child: Text(value.isEmpty ? '-' : value,
+              style: FluentTheme.of(context).typography.caption),
+        ),
+      ]),
+    );
   }
 }
 
-class _RunningSection extends StatelessWidget {
-  const _RunningSection({required this.state, required this.l10n});
-
-  final AppState state;
-  final AppLocalizations l10n;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Expanded(
-          child: Text(l10n.runningMascots,
-              style: FluentTheme.of(context).typography.subtitle),
-        ),
-        if (state.running.isNotEmpty)
-          Button(
-            onPressed: () => state.dismissAll(),
-            child: Text(l10n.dismissAll),
-          ),
-      ]),
-      const SizedBox(height: 8),
-      if (!state.runtimeOnline)
-        Text(l10n.runtimeOffline, style: FluentTheme.of(context).typography.caption)
-      else if (state.running.isEmpty)
-        Text(l10n.noRunning, style: FluentTheme.of(context).typography.caption)
-      else
-        ...state.running.map(
-          (mascot) => Card(
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('#${mascot.id} ${mascot.name}',
-                      style: FluentTheme.of(context).typography.bodyStrong),
-                  Text(
-                    mascot.activeBehavior ?? '',
-                    style: FluentTheme.of(context).typography.caption,
-                  ),
-                ]),
-              ),
-              Button(
-                onPressed: () => state.dismiss(mascot.id),
-                child: Text(l10n.dismiss),
-              ),
-            ]),
-          ),
-        ),
-    ]);
-  }
+/// 预览字节的小包装（Image.memory 需要 Uint8List）。
+class Uint8ListAware {
+  Uint8ListAware(this.bytes);
+  final Uint8List bytes;
 }

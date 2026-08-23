@@ -1,6 +1,11 @@
+import 'dart:async';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:neurolings_manager/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../state/app_state.dart';
 
@@ -58,11 +63,182 @@ class _StorePageState extends State<StorePage> {
   bool _fromCache = false;
   String? _warning;
   String? _installingId;
+  bool _loginConfigured = false;
+  bool _signedIn = false;
+  String _login = '';
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _load();
+      _loadLogin();
+    });
+  }
+
+  Future<void> _loadLogin() async {
+    try {
+      final state = context.read<AppState>();
+      final status = await state.api.command({'command': 'store_github_status'});
+      if (!mounted) return;
+      setState(() {
+        _loginConfigured = status['configured'] == true;
+        _signedIn = status['signed_in'] == true;
+        _login = (status['login'] as String?) ?? '';
+      });
+    } catch (_) {
+      // 运行时离线时保持未登录展示。
+    }
+  }
+
+  /// Device Flow 登录：显示用户码对话框并按提示间隔轮询授权结果。
+  Future<void> _signIn() async {
+    final l10n = AppLocalizations.of(context);
+    final state = context.read<AppState>();
+    try {
+      final start = await state.api.command({'command': 'store_github_start'});
+      if (!mounted) return;
+      final userCode = start['user_code'] as String? ?? '';
+      final uri = start['verification_uri'] as String? ?? '';
+      var interval = (start['interval'] as num?)?.toInt() ?? 5;
+      var closed = false;
+      final completer = Completer<void>();
+      unawaited(showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          Future<void> poll() async {
+            while (!closed && !completer.isCompleted) {
+              await Future.delayed(Duration(seconds: interval));
+              if (closed) return;
+              try {
+                final step =
+                    await state.api.command({'command': 'store_github_step'});
+                if (step['state'] == 'authorized') {
+                  if (!completer.isCompleted) completer.complete();
+                  return;
+                }
+                if (step['state'] == 'pending') {
+                  interval = (step['next_interval'] as num?)?.toInt() ?? interval;
+                } else {
+                  if (!completer.isCompleted) completer.complete();
+                  return;
+                }
+              } catch (_) {
+                if (!completer.isCompleted) completer.complete();
+                return;
+              }
+            }
+          }
+
+          unawaited(poll());
+          completer.future.whenComplete(() {
+            closed = true;
+            if (Navigator.canPop(dialogContext)) Navigator.pop(dialogContext);
+          });
+          return ContentDialog(
+            title: Text(l10n.storeSignIn),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.storeSignInHint),
+                const SizedBox(height: 12),
+                Center(
+                  child: SelectableText(
+                    userCode,
+                    style: FluentTheme.of(context)
+                        .typography
+                        .display
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Center(
+                  child: HyperlinkButton(
+                    onPressed: () => launchUrl(Uri.parse(uri)),
+                    child: Text(uri),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Button(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: userCode));
+                    },
+                    child: Text(l10n.storeCopyCode),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Center(
+                    child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: ProgressRing(strokeWidth: 2))),
+              ],
+            ),
+            actions: [
+              Button(
+                onPressed: () {
+                  closed = true;
+                  if (!completer.isCompleted) completer.complete();
+                  Navigator.pop(dialogContext);
+                },
+                child: Text(l10n.cancel),
+              ),
+            ],
+          );
+        },
+      ));
+      await completer.future.catchError((_) {});
+      await _loadLogin();
+      if (!mounted) return;
+      displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+          title: Text(_signedIn ? l10n.storeSignInDone(_login) : l10n.storeSignInFailed),
+          severity:
+              _signedIn ? InfoBarSeverity.success : InfoBarSeverity.warning,
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+            title: Text(l10n.error),
+            content: Text(e.toString()),
+            severity: InfoBarSeverity.error);
+      });
+    }
+  }
+
+  Future<void> _signOut() async {
+    final state = context.read<AppState>();
+    try {
+      await state.api.command({'command': 'store_github_signout'});
+    } catch (_) {}
+    await _loadLogin();
+  }
+
+  /// 投稿对话框：包路径 + 元数据表单 + 提交（对齐原版 MascotSubmissionDialog）。
+  Future<void> _submitMascot() async {
+    final l10n = AppLocalizations.of(context);
+    if (!_signedIn) {
+      await _signIn();
+      if (!_signedIn) return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _SubmissionDialog(
+        l10n: l10n,
+        onSubmit: (fields) async {
+          final state = context.read<AppState>();
+          return state.api.command({
+            'command': 'store_submit_mascot',
+            ...fields,
+          });
+        },
+      ),
+    );
   }
 
   Future<void> _load({bool refresh = false}) async {
@@ -138,9 +314,6 @@ class _StorePageState extends State<StorePage> {
                 if (entry.size >= 0) _chip(_formatSize(entry.size)),
               ]),
               if (entry.authors.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text('作者: ${entry.authors.join(', ')}', style: const TextStyle(fontSize: 12))),
-              if (entry.tags.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('标签: ${entry.tags.join(', ')}', style: const TextStyle(fontSize: 12))),
-              if (entry.categories.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('分类: ${entry.categories.join(', ')}', style: const TextStyle(fontSize: 12))),
-              if (entry.sha256.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: SelectableText('SHA256: ${entry.sha256}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace'))),
             ]),
           ),
         ),
@@ -353,19 +526,6 @@ class _StorePageState extends State<StorePage> {
               (entry) => Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: ListTile(
-                  leading: entry.iconUrl.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: Image.network(
-                            entry.iconUrl,
-                            width: 40,
-                            height: 40,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stack) =>
-                                const Icon(FluentIcons.unknown),
-                          ),
-                        )
-                      : const Icon(FluentIcons.unknown, size: 40),
                   title: Text(entry.name,
                       style: FluentTheme.of(context).typography.bodyStrong),
                   subtitle: Column(
@@ -400,24 +560,204 @@ class _StorePageState extends State<StorePage> {
                 ),
               ),
             ),
-          // GitHub 登录占位
+          // 社区投稿区（对齐原版：登录状态 + 投稿入口）
           Card(
             margin: const EdgeInsets.all(16),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [const Icon(FluentIcons.accounts, size: 20), const SizedBox(width: 8), Text('GitHub 登录', style: FluentTheme.of(context).typography.bodyStrong)]),
+                Row(children: [
+                  const Icon(FluentIcons.accounts, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _signedIn
+                          ? l10n.storeSignedInAs(_login)
+                          : l10n.storeCommunity,
+                      style: FluentTheme.of(context).typography.bodyStrong,
+                    ),
+                  ),
+                ]),
                 const SizedBox(height: 8),
-                const Text('登录后可投稿、收藏，建议通过 NEUROLINGSCE_MASCOT_INDEX_URL 配置私有索引。', style: TextStyle(fontSize: 12)),
+                Text(
+                  _signedIn ? l10n.storeCommunityHintSignedIn : l10n.storeCommunityHint,
+                  style: const TextStyle(fontSize: 12),
+                ),
                 const SizedBox(height: 8),
-                Button(onPressed: () => displayInfoBar(context, builder: (c, close) => const InfoBar(title: Text('GitHub 登录 UI 正在接入'), content: Text('后端已实现 Device Flow，UI 接线进行中'), severity: InfoBarSeverity.info)), child: const Text('使用 GitHub 登录')),
-                const SizedBox(height: 4),
-                Button(onPressed: () => displayInfoBar(context, builder: (c, close) => const InfoBar(title: Text('投稿功能'), content: Text('后端 SubmissionClient 已就绪，UI 表单待补'), severity: InfoBarSeverity.info)), child: const Text('投稿新桌宠')),
+                if (!_signedIn)
+                  Button(
+                    onPressed: _loginConfigured ? _signIn : null,
+                    child: Text(_loginConfigured
+                        ? l10n.storeSignIn
+                        : l10n.storeSignInUnavailable),
+                  )
+                else ...[
+                  Button(onPressed: _submitMascot, child: Text(l10n.storeSubmit)),
+                  const SizedBox(height: 4),
+                  Button(onPressed: _signOut, child: Text(l10n.storeSignOut)),
+                ],
               ]),
             ),
           ),
         ],
       ],
+    );
+  }
+}
+
+
+/// 投稿表单对话框：选择 .mascot 包并填写元数据后提交。
+class _SubmissionDialog extends StatefulWidget {
+  const _SubmissionDialog({required this.l10n, required this.onSubmit});
+
+  final AppLocalizations l10n;
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic>) onSubmit;
+
+  @override
+  State<_SubmissionDialog> createState() => _SubmissionDialogState();
+}
+
+class _SubmissionDialogState extends State<_SubmissionDialog> {
+  String? _packagePath;
+  final _id = TextEditingController();
+  final _name = TextEditingController();
+  final _version = TextEditingController();
+  final _summary = TextEditingController();
+  final _description = TextEditingController();
+  final _license = TextEditingController(text: 'CC-BY-NC-SA-4.0');
+  final _maintainers = TextEditingController();
+  bool _confirmed = false;
+  bool _submitting = false;
+  String? _result;
+
+  @override
+  void dispose() {
+    for (final controller in [
+      _id,
+      _name,
+      _version,
+      _summary,
+      _description,
+      _license,
+      _maintainers,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _pickPackage() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mascot'],
+      dialogTitle: widget.l10n.storeSubmitPickPackage,
+    );
+    if (picked == null) return;
+    final path = picked.files.singleOrNull?.path;
+    if (path == null) return;
+    setState(() => _packagePath = path);
+    // 以文件名预填 id。
+    if (_id.text.trim().isEmpty) {
+      final base = path.split(RegExp(r'[\/]')).last;
+      _id.text = base.replaceFirst(RegExp(r'\.mascot$', caseSensitive: false), '');
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_packagePath == null || !_confirmed) return;
+    setState(() => _submitting = true);
+    try {
+      final result = await widget.onSubmit({
+        'path': _packagePath,
+        'id': _id.text.trim(),
+        'name': _name.text.trim(),
+        'version': _version.text.trim(),
+        'summary': _summary.text.trim(),
+        'description': _description.text.trim(),
+        'license': _license.text.trim(),
+        'maintainers': _maintainers.text.trim(),
+      });
+      if (!mounted) return;
+      final ok = result['ok'] == true;
+      final prUrl = result['pr_url'] as String? ?? '';
+      setState(() => _result = ok
+          ? widget.l10n.storeSubmitDone(prUrl)
+          : widget.l10n.storeSubmitFailed(
+              result['error_code'] as String? ?? '', result['error'] as String? ?? ''));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _result = e.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = widget.l10n;
+    return ContentDialog(
+      title: Text(l10n.storeSubmit),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Expanded(
+                  child: TextBox(
+                    readOnly: true,
+                    placeholder: l10n.storeSubmitPickPackage,
+                    controller: TextEditingController(text: _packagePath ?? ''),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Button(onPressed: _pickPackage, child: Text(l10n.storeSubmitPick)),
+              ]),
+              const SizedBox(height: 8),
+              _field('ID', _id),
+              _field(l10n.storeSubmitName, _name),
+              _field(l10n.version, _version),
+              _field(l10n.storeSubmitSummary, _summary),
+              _field(l10n.description, _description),
+              _field(l10n.license, _license),
+              _field(l10n.storeSubmitMaintainers, _maintainers),
+              const SizedBox(height: 8),
+              Checkbox(
+                checked: _confirmed,
+                onChanged: (v) => setState(() => _confirmed = v ?? false),
+                content: Text(l10n.storeSubmitConfirm),
+              ),
+              if (_result != null) ...[
+                const SizedBox(height: 8),
+                Text(_result!),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        Button(onPressed: () => Navigator.pop(context), child: Text(l10n.close)),
+        FilledButton(
+          onPressed: _submitting || _packagePath == null || !_confirmed
+              ? null
+              : _submit,
+          child: _submitting
+              ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+              : Text(l10n.storeSubmit),
+        ),
+      ],
+    );
+  }
+
+  Widget _field(String label, TextEditingController controller) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        SizedBox(width: 90, child: Text(label)),
+        Expanded(child: TextBox(controller: controller)),
+      ]),
     );
   }
 }

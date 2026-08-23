@@ -58,7 +58,10 @@ pub struct Session {
     /// 待显示普通气泡文本。
     pub pending_bubble: Option<String>,
     /// 待显示 Codex 气泡（标题, 正文, 时长）。
-    pub pending_codex_bubble: Option<(String, String, std::time::Duration)>,
+    /// Codex 气泡队列（上限 8，满时丢最旧，对齐原版 SpeechBubble 队列）。
+    pub codex_bubble_queue: std::collections::VecDeque<(String, String, std::time::Duration)>,
+    /// 当前显示的气泡是否为 Codex 气泡（点击时跳转 Codex 页）。
+    pub bubble_is_codex: bool,
     /// 当前气泡的位图与尺寸（跟随移动时复用）。
     pub bubble_bitmap: Option<Vec<u8>>,
     pub bubble_size: (u32, u32),
@@ -118,11 +121,21 @@ fn load_frame<'a>(
         return frames.get(name);
     }
     let raw_name = name.strip_prefix('/').unwrap_or(name);
-    let path = img_dir.join(raw_name);
-    let img = match image::open(&path) {
-        Ok(img) => img.to_rgba8(),
-        Err(err) => {
-            eprintln!("mascot {mascot_name}: missing frame {name}: {err}");
+    // 虚拟模板 @ 的帧取内嵌资源；普通模板读包目录。
+    let decoded = if mascot_name == crate::templates::DEFAULT_TEMPLATE_NAME {
+        crate::templates::DEFAULT_MASCOT
+            .get_file(format!("img/{raw_name}"))
+            .and_then(|f| image::load_from_memory(f.contents()).ok())
+    } else {
+        image::open(img_dir.join(raw_name)).ok()
+    };
+    let img = match decoded {
+        Some(img) => img.to_rgba8(),
+        None => {
+            crate::log::warn(
+                "mascot",
+                &format!("mascot {mascot_name}: missing frame {name}"),
+            );
             return None;
         }
     };
@@ -210,7 +223,8 @@ pub fn create_session(
         bubble_window: None,
         bubble_until: Instant::now(),
         pending_bubble: None,
-        pending_codex_bubble: None,
+        codex_bubble_queue: std::collections::VecDeque::new(),
+        bubble_is_codex: false,
         bubble_bitmap: None,
         bubble_size: (0, 0),
     };

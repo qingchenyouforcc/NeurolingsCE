@@ -8,7 +8,7 @@ pub mod session;
 pub mod sounds;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -84,10 +84,16 @@ struct RunState {
     windowed: bool,
     sandbox: Option<Sandbox>,
     bubble_texts: HashMap<String, Vec<String>>,
+    /// 管理器窗口最新矩形（心跳上报），召唤落点跟随管理器所在屏。
+    manager_rect: Option<neurolings_platform::Rect>,
+    /// Codex 通知去重表（threadId+turnId，60 秒窗口，容量 64）。
+    codex_seen: VecDeque<(String, String, Instant)>,
+    /// 点击 Codex 气泡后请求管理器跳转 Codex 页（心跳响应消费）。
+    codex_page_requested: bool,
 }
 
 pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
-    crate::services::debug_log("run: 运行时启动");
+    crate::log::info("startup", "runtime starting");
     let RuntimeOptions {
         templates,
         screen,
@@ -166,8 +172,15 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
     if enable_http {
         let tx = command_tx.clone();
         _http_thread = Some(std::thread::spawn(move || {
-            crate::http::serve(tx);
+            crate::http::serve(tx, neurolings_common::api::HTTP_PORT);
         }));
+    }
+    // Manager 私有管理端口常开（双进程架构的内部通道，不受 http/enabled 影响）。
+    if !headless {
+        let tx = command_tx.clone();
+        std::thread::spawn(move || {
+            crate::http::serve(tx, neurolings_common::api::INTERNAL_HTTP_PORT);
+        });
     }
 
     let mut state = RunState {
@@ -189,18 +202,32 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         windowed: false,
         sandbox: None,
         bubble_texts: HashMap::new(),
+        manager_rect: None,
+        codex_seen: VecDeque::new(),
+        codex_page_requested: false,
     };
 
     startup_spawn(&mut state, &opts, &backend);
 
     let mut tick_count: u64 = 0;
     let mut next_tick = Instant::now();
+    let mut next_tray_sync = Instant::now();
 
     while !state.quit {
         if let Some(limit) = tick_limit
             && tick_count >= limit
         {
             break;
+        }
+
+        // 低频同步托盘 Show/Hide 文案（管理器自行启动/退出时跟随）。
+        if Instant::now() >= next_tray_sync {
+            next_tray_sync += Duration::from_millis(500);
+            #[cfg(windows)]
+            {
+                let names = state.templates.names_sorted();
+                crate::tray::sync_visibility(&names);
+            }
         }
 
         // 输入事件与托盘。
@@ -213,8 +240,8 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         }
         #[cfg(windows)]
         match crate::tray::poll() {
-            crate::tray::TrayCommand::ShowManager => {
-                crate::services::launch_manager();
+            crate::tray::TrayCommand::ToggleManager => {
+                toggle_manager(&mut state);
             }
             crate::tray::TrayCommand::Spawn(name) => {
                 let _ = spawn_default(&mut state, &backend, &name, "");
@@ -289,7 +316,11 @@ fn build_view<'a>(
         combinations: &state.combinations,
         quit: &mut state.quit,
         backend,
+        app_data_dir: &state.app_data_dir,
         windowed: &mut state.windowed,
+        manager_rect: &mut state.manager_rect,
+        codex_seen: &mut state.codex_seen,
+        codex_page_requested: &mut state.codex_page_requested,
     }
 }
 
@@ -301,7 +332,7 @@ fn startup_spawn(
     backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>,
 ) {
     if opts.headless {
-        // 冒烟测试直接召唤一只桌宠。
+        // 冒烟测试直接召唤一只桌宠：优先内嵌默认模板 @。
         let name = opts
             .spawn_name
             .clone()
@@ -310,7 +341,7 @@ fn startup_spawn(
                     .templates
                     .names_sorted()
                     .iter()
-                    .find(|n| n.as_str() == "Default")
+                    .find(|n| n.as_str() == crate::templates::DEFAULT_TEMPLATE_NAME)
                     .cloned()
             })
             .unwrap_or_else(|| state.templates.names_sorted()[0].clone());
@@ -342,7 +373,7 @@ fn startup_spawn(
         return;
     }
     // 普通启动：拉起管理器；桌宠由用户/管理器召唤。
-    crate::services::debug_log("startup_spawn: 普通启动分支，准备拉起管理器");
+    crate::log::info("startup", "launching manager");
     crate::services::launch_manager();
     if let Some(name) = &opts.spawn_name {
         let _ = spawn_default(state, backend, name, "");
@@ -355,11 +386,19 @@ fn spawn_default(
     name: &str,
     behavior: &str,
 ) -> Result<u64, String> {
-    // 窗口化模式在沙盒环境内生成；否则使用主屏幕环境。
+    // 窗口化模式在沙盒环境内生成；否则跟随管理器所在屏（对齐原版
+    // mascotScreen 语义），管理器未知时回退主屏。
     let env = if state.windowed {
         state.envs.sandbox.clone()
     } else {
-        state.envs.primary().cloned()
+        let manager_env = state.manager_rect.and_then(|rect| {
+            let center = Vec2::new(
+                (rect.left + rect.right) as f64 / 2.0,
+                (rect.top + rect.bottom) as f64 / 2.0,
+            );
+            state.envs.env_at(center).cloned()
+        });
+        manager_env.or_else(|| state.envs.primary().cloned())
     };
     let env = env.ok_or("no environment")?;
     let mut guard = backend.as_ref().map(|b| b.borrow_mut());
@@ -381,32 +420,76 @@ fn restore_startup_combination(
     state: &mut RunState,
     backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>,
 ) {
-    let mode = state
-        .settings
-        .get_string(crate::settings::KEY_STARTUP_COMBO_MODE, "last:");
-    let name = if mode == "last:" {
-        crate::combinations::LAST_BEFORE_CLOSE.to_string()
-    } else if let Some(id) = mode.strip_prefix("id:") {
-        id.to_string()
-    } else {
-        crate::combinations::LAST_BEFORE_CLOSE.to_string()
+    // 值域与默认值对齐原版：last（默认）→关闭前状态；saved→按 id；其余（含 none）不恢复。
+    let mode = state.settings.get_string(
+        crate::settings::KEY_STARTUP_COMBO_MODE,
+        crate::combinations::RESTORE_MODE_LAST,
+    );
+    let body = match mode.as_str() {
+        crate::combinations::RESTORE_MODE_NONE => None,
+        crate::combinations::RESTORE_MODE_LAST => state
+            .combinations
+            .get(crate::combinations::LAST_BEFORE_CLOSE_ID),
+        crate::combinations::RESTORE_MODE_SAVED => {
+            let id = state
+                .settings
+                .get_string(crate::settings::KEY_STARTUP_COMBO_ID, "");
+            state.combinations.get(&id)
+        }
+        other => {
+            // 与原版一致：未知模式记警告并跳过恢复。
+            crate::log::warn(
+                "combination",
+                &format!("unknown startup combination restore mode={other}"),
+            );
+            None
+        }
     };
-    let Some(combo) = state.combinations.get(&name) else {
+    let Some(combo) = body else {
         return;
     };
-    for member in &combo.members {
-        let _ = spawn_default(state, backend, &member.template, "");
+    let mascots = combo.mascots.clone();
+    restore_body(state, backend, &mascots);
+}
+
+/// 按成员表逐只召唤，沿用原版安全限位（单条目 50、总量 200）。
+fn restore_body(
+    state: &mut RunState,
+    backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>,
+    mascots: &[crate::combinations::CombinationMember],
+) {
+    let mut attempted: u32 = 0;
+    for member in mascots {
+        let count = member.count.min(crate::combinations::MAX_MASCOTS_PER_ENTRY);
+        for _ in 0..count {
+            if attempted >= crate::combinations::MAX_MASCOTS_PER_COMBINATION {
+                break;
+            }
+            attempted += 1;
+            let _ = spawn_default(state, backend, &member.name, "");
+        }
+        if attempted >= crate::combinations::MAX_MASCOTS_PER_COMBINATION {
+            break;
+        }
     }
 }
 
 fn save_last_combination(state: &mut RunState) {
-    let templates: Vec<String> = state.sessions.iter().map(|s| s.name.clone()).collect();
-    if templates.is_empty() {
-        return;
+    // 与原版一致：空组合也写入（下次按 last 恢复时恢复 0 只）。
+    let mascots = crate::combinations::aggregate(state.sessions.iter().map(|s| s.name.clone()));
+    let _ = state.combinations.save_last_before_close(mascots);
+}
+
+/// 切换管理器窗口可见性：已运行则切换显隐，未运行则拉起（对齐原版托盘语义）。
+fn toggle_manager(state: &mut RunState) {
+    if neurolings_platform::manager_window::is_running() {
+        neurolings_platform::manager_window::toggle();
+        let names = state.templates.names_sorted();
+        #[cfg(windows)]
+        crate::tray::refresh(&names);
+    } else {
+        crate::services::launch_manager();
     }
-    let _ = state
-        .combinations
-        .save_combination(crate::combinations::LAST_BEFORE_CLOSE, templates);
 }
 
 /// 路由一条平台事件到对应会话（桌宠窗口或沙盒窗口）。
@@ -420,7 +503,18 @@ fn handle_event(
         return;
     }
     if event.mascot_id >= bubbles::BUBBLE_ID_BASE {
-        return; // 气泡窗口不响应交互
+        // 点击 Codex 气泡跳转管理器 Codex 页（对齐原版 codexActivated）。
+        if event.kind == MascotEventKind::LeftDown
+            && let Some(session) = state
+                .sessions
+                .iter_mut()
+                .find(|s| bubbles::BUBBLE_ID_BASE + s.id == event.mascot_id)
+            && session.bubble_is_codex
+        {
+            state.codex_page_requested = true;
+            crate::services::launch_manager();
+        }
+        return; // 气泡窗口不响应其余交互
     }
     let id = event.mascot_id;
     match event.kind {
@@ -645,8 +739,6 @@ fn session_contains(session: &Session, point: Vec2) -> bool {
 /// 推进一帧：环境覆盖、行为 tick、繁殖、音效、渲染。
 fn run_tick(state: &mut RunState, backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>) {
     let windowed = state.windowed;
-    let locale = state.settings.locale();
-    let _ = locale;
 
     // 迭代顺序与 C++ 一致：从后往前。
     let mut i = state.sessions.len();
@@ -863,7 +955,8 @@ fn handle_breed_request(
         bubble_window: None,
         bubble_until: Instant::now(),
         pending_bubble: None,
-        pending_codex_bubble: None,
+        codex_bubble_queue: std::collections::VecDeque::new(),
+        bubble_is_codex: false,
         bubble_bitmap: None,
         bubble_size: (0, 0),
     };

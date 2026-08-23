@@ -84,7 +84,16 @@ impl EnvironmentSet {
                 let env = retained
                     .remove(&key)
                     .unwrap_or_else(|| Rc::new(RefCell::new(Environment::default())));
-                Self::update_env(&env, &screen, cursor, active, scale, detach, allows_pushing, allows_breeding);
+                Self::update_env(
+                    &env,
+                    &screen,
+                    cursor,
+                    active,
+                    scale,
+                    detach,
+                    allows_pushing,
+                    allows_breeding,
+                );
                 ScreenEnv { screen, env }
             })
             .collect();
@@ -108,7 +117,16 @@ impl EnvironmentSet {
                     bottom: h,
                 },
             };
-            Self::update_env(sandbox, &rect, cursor, None, scale, detach, false, allows_breeding);
+            Self::update_env(
+                sandbox,
+                &rect,
+                cursor,
+                None,
+                scale,
+                detach,
+                false,
+                allows_breeding,
+            );
             // 沙盒环境的光标使用窗口局部坐标。
             if let Some(origin) = sandbox_origin {
                 let local_cursor = Vec2::new(

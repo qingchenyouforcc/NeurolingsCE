@@ -1,44 +1,326 @@
 {
   "@@locale": "en",
-  "appTitle": "NeurolingsCE Manager",
+  "appTitle": "NeurolingsCE — Mascot Manager",
   "navHome": "Home",
-  "navCreate": "Create",
   "navStore": "Store",
+  "navCreate": "Create",
   "navCombinations": "Combinations",
   "navCodex": "Codex",
   "navSettings": "Settings",
   "navAbout": "About",
+  "closeConfirmTitle": "Close NeurolingsCE?",
+  "closeConfirmBody": "Do you want to close NeurolingsCE? All mascots will be dismissed.",
+  "closeKeepOpen": "Keep open",
+  "closeConfirmClose": "Close",
   "runtimeOnline": "Runtime online",
   "runtimeOffline": "Runtime offline",
   "startRuntime": "Start runtime",
-  "loadedMascots": "Installed mascots",
+  "loadedMascots": "Mascot Library",
   "runningMascots": "Running mascots",
   "spawn": "Summon",
+  "spawnRandom": "Spawn Random",
   "dismiss": "Close",
   "dismissAll": "Close all",
   "refresh": "Refresh",
-  "noTemplates": "No mascot templates installed. Import one from the Create page.",
+  "importButton": "Import",
+  "showFolder": "Show Folder",
+  "deleteSelected": "Delete Selected",
+  "noTemplates": "No imported mascots yet",
+  "noTemplatesHint": "Import a .mascot package or Shimeji archive to get started.",
+  "importMascot": "Import Mascot...",
   "noRunning": "No mascots are running.",
-  "createTitle": "Import a mascot package",
-  "createHint": "Select a Shimeji-ee zip archive or a .mascot package to import it into the local storage.",
-  "pickArchive": "Choose archive...",
-  "importing": "Importing...",
-  "importDone": "Import finished: {result}",
-  "@importDone": {
-    "placeholders": {
-      "result": {}
-    }
-  },
-  "storePlaceholder": "The mascot store arrives in milestone M7.",
-  "combinationsPlaceholder": "Mascot combinations arrive in milestone M8.",
-  "codexPlaceholder": "Codex integration arrives in milestone M8.",
-  "settingsLanguage": "Language",
-  "settingsRuntime": "Runtime",
-  "settingsStorage": "Mascot storage",
-  "settingsHttpHint": "The HTTP API listens on 127.0.0.1:32456 when enabled via NEUROLINGSCE_HTTP=1.",
-  "aboutDescription": "NeurolingsCE is a cross-platform desktop mascot (Shimeji) runner, rewritten in Rust + Flutter.",
   "version": "Version",
+  "author": "Author",
+  "description": "Description",
   "license": "License",
   "error": "Error",
-  "ok": "OK"
+  "ok": "OK",
+  "cancel": "Cancel",
+  "save": "Save",
+  "delete": "Delete",
+  "close": "Close",
+  "homeSelectTemplate": "Select a mascot to see details.",
+  "homeImportDone": "Import finished",
+  "homeAndMore": "and {count} more",
+  "@homeAndMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "homeDeleteConfirm": "Delete {count} selected mascot(s)?",
+  "@homeDeleteConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "createTitle": "Create Mascot Package",
+  "createHint": "Convert a Shimeji-ee zip archive into .mascot packages.",
+  "createStep1": "Choose a zip archive and check its content",
+  "createStep2": "Select mascots and edit info.json",
+  "createStep3": "Choose an output folder and generate packages",
+  "createChooseZip": "Choose Zip...",
+  "createCheckContent": "Check Content",
+  "createChooseFolder": "Choose Folder...",
+  "createGenerate": "Generate .mascot",
+  "createValidJson": "Valid JSON.",
+  "createInvalidJson": "Invalid JSON: {error}",
+  "@createInvalidJson": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "createNotConvertible": "not convertible",
+  "createNoCandidates": "No convertible mascots were found in this archive.",
+  "createCreated": "Created: {path}",
+  "@createCreated": {
+    "placeholders": {
+      "path": {}
+    }
+  },
+  "createFailed": "Failed: {name} - {error}",
+  "@createFailed": {
+    "placeholders": {
+      "name": {},
+      "error": {}
+    }
+  },
+  "createConvertedCount": "Converted {count} mascot(s).",
+  "@createConvertedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsGroupInteraction": "Interaction",
+  "settingsGroupCodex": "Codex",
+  "settingsGroupDisplay": "Display",
+  "settingsGroupStartup": "Startup",
+  "settingsGroupUpdates": "Updates",
+  "settingsMultiplication": "Multiplication",
+  "settingsMultiplicationHint": "Allow mascots to breed through interactions",
+  "settingsWindowPushing": "Window pushing",
+  "settingsWindowPushingHint": "Mascots can push the active window",
+  "settingsSpeechBubble": "Speech bubbles",
+  "settingsSpeechBubbleHint": "Show a random speech bubble when clicking a mascot",
+  "settingsBubbleClicks": "Speech bubble click count",
+  "settingsBubbleClicksHint": "Trigger the bubble after {count} clicks (1-10)",
+  "@settingsBubbleClicksHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsCodexEnabled": "Codex notifications",
+  "settingsCodexEnabledHint": "Install the notify hook in ~/.codex/config.toml",
+  "settingsCodexConfirmTitle": "Enable Codex notifications?",
+  "settingsCodexConfirmBody": "The following line will be added to {config}:",
+  "@settingsCodexConfirmBody": {
+    "placeholders": {
+      "config": {}
+    }
+  },
+  "settingsCodexTemplate": "Companion template",
+  "settingsCodexTemplateHint": "Mascot used for Codex notifications",
+  "settingsCodexTemplateDefault": "Default Mascot",
+  "settingsCodexTemplateMissing": "Missing: {name} (will use Default Mascot)",
+  "@settingsCodexTemplateMissing": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsCodexTest": "Send test notification",
+  "settingsCodexTestHint": "Show a test bubble to verify the integration",
+  "settingsCodexTestSend": "Send test",
+  "settingsCodexAppServer": "Codex app server",
+  "settingsCodexAppServerHint": "Enable interactive Codex sessions (experimental)",
+  "settingsCodexExecutable": "Codex executable",
+  "settingsCodexExecutableHint": "Leave empty to use codex from PATH",
+  "settingsBrowse": "Browse...",
+  "settingsApprovalBubble": "Approval reminder bubbles",
+  "settingsPlanBubble": "Plan and completion bubbles",
+  "settingsDetachSpeed": "Detach Speed",
+  "settingsDetachSpeedHint": "Current: {value}",
+  "@settingsDetachSpeedHint": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "settingsWindowedMode": "Windowed Mode",
+  "settingsWindowedModeHint": "Run mascots in a sandbox window (640x480)",
+  "settingsWindowedBg": "Background Color",
+  "settingsWindowedBgHint": "Sandbox canvas background (#RRGGBB)",
+  "settingsScale": "Scale",
+  "settingsScaleHint": "Current: {value}",
+  "@settingsScaleHint": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "settingsColorSaved": "Background color saved",
+  "settingsScaleSaved": "Scale saved",
+  "settingsDetachSaved": "Detach speed saved",
+  "settingsEdit": "Edit...",
+  "settingsConfigure": "Configure...",
+  "settingsLanguage": "Language",
+  "settingsLanguageHint": "Interface language (applies immediately)",
+  "settingsAutostart": "Start at Login",
+  "settingsAutostartHint": "Start automatically when you log in",
+  "settingsSilent": "Silent startup",
+  "settingsSilentHint": "Do not show the manager window on autostart",
+  "settingsStartupCombo": "Startup combination",
+  "settingsStartupLast": "Last combination before close",
+  "settingsStartupNone": "Do not restore",
+  "settingsStartupSaved": "Saved combination...",
+  "settingsStartupSavedNamed": "Saved: {name}",
+  "@settingsStartupSavedNamed": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsStartupChoose": "Choose startup combination",
+  "settingsUpdateCheck": "Check for updates on startup",
+  "settingsUpdateCheckHint": "Automatically check for new releases",
+  "settingsUpdateProxy": "Update Proxy",
+  "settingsUpdateProxyHint": "Current: {mode}",
+  "@settingsUpdateProxyHint": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "settingsProxySystem": "System",
+  "settingsProxyDirect": "Direct",
+  "settingsProxyHttp": "HTTP",
+  "settingsProxySocks5": "SOCKS5",
+  "settingsProxyHost": "Host",
+  "settingsProxyPort": "Port",
+  "settingsProxyUser": "Username",
+  "settingsProxyPass": "Password",
+  "settingsOfflineHint": "Runtime offline — some settings require the runtime to be online",
+  "settingsSaveFailed": "Failed to save setting",
+  "aboutVersion": "Version",
+  "aboutCurrent": "Current Version",
+  "aboutLatest": "Latest Release",
+  "aboutLatestNotChecked": "Not checked yet",
+  "aboutCopyVersion": "Copy Version Info",
+  "aboutCopyFormat": "NeurolingsCE {version} (latest: {latest})",
+  "@aboutCopyFormat": {
+    "placeholders": {
+      "version": {},
+      "latest": {}
+    }
+  },
+  "aboutCopied": "Version info copied",
+  "aboutUpdates": "Updates",
+  "aboutOpenReleasePage": "Open Release Page",
+  "aboutViewReleaseNotes": "View Release Notes",
+  "aboutProject": "Project & Support",
+  "aboutUpstream": "Upstream",
+  "aboutQQGroup": "QQ Group",
+  "aboutReportIssue": "Report Issue",
+  "aboutLicenses": "View Licenses",
+  "aboutThirdParty": "Third-party",
+  "storeCommunity": "Community",
+  "storeCommunityHint": "Sign in with GitHub to submit mascots to the registry.",
+  "storeCommunityHintSignedIn": "Submit your own mascots to the registry.",
+  "storeSignIn": "Sign in with GitHub",
+  "storeSignInUnavailable": "GitHub sign-in is not configured",
+  "storeSignInHint": "Enter this code on GitHub to finish signing in:",
+  "storeSignInDone": "Signed in as {login}",
+  "@storeSignInDone": {
+    "placeholders": {
+      "login": {}
+    }
+  },
+  "storeSignInFailed": "Sign-in did not complete",
+  "storeSignOut": "Sign out",
+  "storeCopyCode": "Copy code",
+  "storeSignedInAs": "Signed in as {login}",
+  "@storeSignedInAs": {
+    "placeholders": {
+      "login": {}
+    }
+  },
+  "storeSubmit": "Submit a mascot...",
+  "storeSubmitPickPackage": "Package (.mascot)",
+  "storeSubmitPick": "Browse...",
+  "storeSubmitName": "Name",
+  "storeSubmitSummary": "Summary",
+  "storeSubmitMaintainers": "Maintainers",
+  "storeSubmitConfirm": "I confirm I have the rights to distribute this mascot",
+  "storeSubmitDone": "Submitted. Pull request: {url}",
+  "@storeSubmitDone": {
+    "placeholders": {
+      "url": {}
+    }
+  },
+  "storeSubmitFailed": "Submission failed ({code}): {error}",
+  "@storeSubmitFailed": {
+    "placeholders": {
+      "code": {},
+      "error": {}
+    }
+  },
+  "codexSession": "Session",
+  "codexStatus": "Status",
+  "codexThread": "Thread",
+  "codexWorkspace": "Workspace",
+  "codexTurn": "Turn",
+  "codexMode": "Mode",
+  "codexConnection": "Connection",
+  "codexConnect": "Connect Codex",
+  "codexDisconnect": "Disconnect",
+  "codexNewSession": "New session",
+  "codexResume": "Resume recent",
+  "codexApprovals": "Approvals",
+  "codexNoApprovals": "No pending approvals.",
+  "codexPlan": "Plan",
+  "codexNoPlan": "No plan yet.",
+  "codexMessage": "Message",
+  "codexModeDefault": "Default",
+  "codexModePlan": "Plan",
+  "codexPlanUnsupported": "not supported",
+  "codexAskPlaceholder": "Ask Codex something...",
+  "codexSend": "Send",
+  "codexImplementPlan": "Implement this plan",
+  "codexModifyPlan": "Modify plan",
+  "codexAbort": "Abort task",
+  "codexDecline": "Decline",
+  "codexAllowOnce": "Allow once",
+  "codexAllowSession": "Allow for session",
+  "codexDeclineStop": "Decline and stop",
+  "codexInputTitle": "Codex needs input",
+  "codexNoReply": "The task completed without a reply to display.",
+  "codexEmptyInput": "Enter a message first",
+  "codexDisabledTitle": "Codex app server is disabled",
+  "codexDisabledHint": "Enable 'Codex app server' in Settings to use interactive sessions.",
+  "aboutCheckForUpdates": "Check for Updates",
+  "aboutDownloadInstall": "Download & Install...",
+  "aboutInstall": "Install {version}",
+  "@aboutInstall": {
+    "placeholders": {
+      "version": {}
+    }
+  },
+  "aboutIgnoreVersion": "Ignore This Version",
+  "aboutRemindLater": "Remind Me Later",
+  "aboutUpdateAvailable": "NeurolingsCE {version} is available.",
+  "@aboutUpdateAvailable": {
+    "placeholders": {
+      "version": {}
+    }
+  },
+  "aboutInstallConfirmTitle": "Install update?",
+  "aboutInstallConfirmBody": "Version {version} is downloaded. Launch the installer now? The app will close.",
+  "@aboutInstallConfirmBody": {
+    "placeholders": {
+      "version": {}
+    }
+  },
+  "aboutInstallNow": "Install"
 }

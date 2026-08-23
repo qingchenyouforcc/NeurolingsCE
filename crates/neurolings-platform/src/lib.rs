@@ -22,6 +22,7 @@ pub mod macos;
 pub mod autostart;
 pub mod bubble;
 pub mod ipc;
+pub mod manager_window;
 
 use thiserror::Error;
 

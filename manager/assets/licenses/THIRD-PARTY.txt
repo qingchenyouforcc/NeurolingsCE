@@ -1,0 +1,32 @@
+Neurolings-rs third-party notices
+=================================
+
+Rust crates (license type as declared on crates.io):
+  serde, serde_json ............... MIT OR Apache-2.0
+  thiserror ....................... MIT OR Apache-2.0
+  chrono .......................... MIT OR Apache-2.0
+  image ........................... MIT OR Apache-2.0
+  include_dir ..................... MIT OR Apache-2.0
+  rodio + symphonia ............... MIT OR Apache-2.0
+  rquickjs (QuickJS) .............. MIT
+  roxmltree / quick-xml ........... MIT OR Apache-2.0
+  ureq ............................ MIT OR Apache-2.0
+  zip ............................. MIT
+  windows-rs ...................... MIT OR Apache-2.0
+  x11rb ........................... MIT OR Apache-2.0
+  objc2 ........................... MIT
+  tray-icon / muda ................ MIT OR Apache-2.0
+  tray-icon uses the "SVG/ICO to rgba" image pipeline: see image above.
+
+Flutter/Dart packages (pub.dev license types):
+  fluent_ui ....................... MIT
+  window_manager .................. MIT
+  http ............................ BSD-3-Clause
+  file_picker ..................... MIT
+  provider ........................ MIT
+  intl / flutter_localizations .... BSD-3-Clause
+  url_launcher .................... BSD-3-Clause
+
+The full license texts are distributed with the source repository
+(https://github.com/qingchenyouforcc/Neurolings-rs) and in the
+respective upstream packages.

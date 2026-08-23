@@ -11,7 +11,6 @@ import '../state/app_state.dart';
 /// - 保存命名弹窗默认值 Combination %1（本地化短日期）
 /// - 安全限位提示 50 / 200
 /// - missing / failed 去重报告
-/// - 启动组合模式展示（与设置页同一键）
 /// - 时间本地化
 class CombinationsPage extends StatefulWidget {
   const CombinationsPage({super.key});
@@ -22,7 +21,7 @@ class CombinationsPage extends StatefulWidget {
 
 // ---- 常量（与原版 kMaxMascotsPerEntry / kMaxMascotsPerCombination 对齐） ----
 
-const String _kLastBeforeCloseId = '__last_before_close__';
+const String _kLastBeforeCloseId = 'lastBeforeClose';
 const int _kMaxPerEntry = 50;
 const int _kMaxPerCombination = 200;
 
@@ -59,11 +58,6 @@ class _CombinationsPageState extends State<CombinationsPage> {
 
   List<_CombinationItem> _items = [];
   String? _selectedId;
-
-  // 启动恢复模式（与 settings 的 startup/restoreCombinationMode 同键）
-  String _startupModeRaw = 'last:';
-  String? _startupId;
-  bool _savingStartup = false;
 
   bool _isZh(BuildContext context) {
     final locale = Localizations.localeOf(context).languageCode.toLowerCase();
@@ -229,99 +223,52 @@ class _CombinationsPageState extends State<CombinationsPage> {
       final state = context.read<AppState>();
       await state.refresh();
 
-      // 拉取启动模式（与设置页同键），失败则保持默认值
-      String modeRaw = 'last:';
-      String? modeId;
-      try {
-        final settings = await state.api.command({'command': 'get_settings'});
-        final v = settings['startup/restoreCombinationMode'];
-        if (v is String && v.isNotEmpty) modeRaw = v;
-        final idV = settings['startup/restoreCombinationId'];
-        if (idV is String && idV.isNotEmpty) modeId = idV;
-        // 兼容旧值：none / last / last:
-        if (modeRaw == 'none' || modeRaw == 'last') {
-          // 保持原值，展示时做映射
-        }
-      } catch (_) {
-        // 忽略，保持默认
-      }
 
-      // 拉取组合名列表
+      // 拉取组合列表（含关闭前状态）
       final result = await state.api.command({'command': 'list_combinations'});
       if (!mounted) return;
 
-      // 兼容两种返回：List<String> 或 List<Map>
-      final rawList = result['combinations'];
-      final List<String> names = [];
-      final Map<String, Map<String, dynamic>> detailsByName = {};
-      if (rawList is List) {
-        for (final e in rawList) {
-          if (e is String) {
-            names.add(e);
-          } else if (e is Map<String, dynamic>) {
-            final n = (e['name'] as String?) ?? (e['id'] as String?) ?? '';
-            if (n.isNotEmpty) {
-              names.add(n);
-              detailsByName[n] = e;
-            }
-          } else if (e is Map) {
-            final m = e.cast<String, dynamic>();
-            final n = (m['name'] as String?) ?? (m['id'] as String?) ?? '';
-            if (n.isNotEmpty) {
-              names.add(n);
-              detailsByName[n] = m;
-            }
-          }
-        }
-      }
-
-      // 构建 items：首项固定 LastBeforeClose
+      // 构建 items：首项固定 LastBeforeClose，其余按保存顺序（与原版一致，不排序）
       final items = <_CombinationItem>[];
 
-      // LastBeforeClose：即使后端未返回也展示（不可删）
       final lastDisplay = _t(context, 'Last Combination Before Close', '上次关闭前的组合');
+      final rawLast = result['last_before_close'];
       _CombinationItem lastItem;
-      if (names.contains(_kLastBeforeCloseId)) {
-        // 已在列表中，尝试拉取详情
-        final cached = detailsByName[_kLastBeforeCloseId];
-        if (cached != null) {
-          lastItem = _itemFromRaw(
-            id: _kLastBeforeCloseId,
-            displayName: lastDisplay,
-            type: _CombinationType.lastBeforeClose,
-            raw: cached,
-          );
-        } else {
-          lastItem = await _fetchDetailForId(_kLastBeforeCloseId, lastDisplay, _CombinationType.lastBeforeClose);
-        }
+      if (rawLast is Map) {
+        lastItem = _itemFromRaw(
+          id: _kLastBeforeCloseId,
+          displayName: lastDisplay,
+          type: _CombinationType.lastBeforeClose,
+          raw: rawLast.cast<String, dynamic>(),
+        );
       } else {
-        // 不在列表中，仍展示空状态（尝试拉取，若后端有保存则会返回）
         lastItem = await _fetchDetailForId(_kLastBeforeCloseId, lastDisplay, _CombinationType.lastBeforeClose);
       }
       items.add(lastItem);
 
-      // 其余保存的组合（排除 LastBeforeClose，排序与原版一致：按名称排序）
-      final savedNames = names.where((n) => n != _kLastBeforeCloseId).toList()..sort();
-      for (final name in savedNames) {
-        final cached = detailsByName[name];
-        if (cached != null) {
+      final rawList = result['combinations'];
+      if (rawList is List) {
+        for (final e in rawList) {
+          if (e is! Map) continue;
+          final m = e.cast<String, dynamic>();
+          final id = (m['id'] as String?) ?? '';
+          if (id.isEmpty || id == _kLastBeforeCloseId) continue;
+          final name = (m['name'] as String?)?.trim() ?? '';
+          final displayName = name.isEmpty
+              ? _t(context, 'Untitled Combination', '未命名组合')
+              : name;
           items.add(_itemFromRaw(
-            id: name,
-            displayName: name,
+            id: id,
+            displayName: displayName,
             type: _CombinationType.saved,
-            raw: cached,
+            raw: m,
           ));
-        } else {
-          final detail = await _fetchDetailForId(name, name, _CombinationType.saved);
-          items.add(detail);
         }
       }
 
       if (!mounted) return;
       setState(() {
         _items = items;
-        _startupModeRaw = modeRaw;
-        _startupId = modeId;
         _loading = false;
         // 保持选中：若原选中仍存在则保留，否则选中首项
         if (_selectedId == null || !_items.any((e) => e.id == _selectedId)) {
@@ -345,7 +292,7 @@ class _CombinationsPageState extends State<CombinationsPage> {
   ) async {
     try {
       final state = context.read<AppState>();
-      final res = await state.api.command({'command': 'get_combination', 'name': id});
+      final res = await state.api.command({'command': 'get_combination', 'id': id});
       if (res.containsKey('error')) {
         // 后端未实现或无此组合
         if (res['code'] == 'combination_not_found' || res['status'] == 404) {
@@ -486,7 +433,7 @@ class _CombinationsPageState extends State<CombinationsPage> {
     setState(() => _busy = true);
     try {
       final state = context.read<AppState>();
-      final result = await state.api.command({'command': 'restore_combination', 'name': item.id});
+      final result = await state.api.command({'command': 'restore_combination', 'id': item.id});
       if (!mounted) return;
       await state.refresh();
 
@@ -564,7 +511,7 @@ class _CombinationsPageState extends State<CombinationsPage> {
     setState(() => _busy = true);
     try {
       final state = context.read<AppState>();
-      await state.api.command({'command': 'delete_combination', 'name': item.id});
+      await state.api.command({'command': 'delete_combination', 'id': item.id});
       if (!mounted) return;
       // 删除后选中回到首项
       _selectedId = _kLastBeforeCloseId;
@@ -582,69 +529,6 @@ class _CombinationsPageState extends State<CombinationsPage> {
     }
   }
 
-  /// 启动模式切换（在组合页直接展示，与设置页同键）
-  Future<void> _setStartupMode(String mode, {String? id}) async {
-    setState(() => _savingStartup = true);
-    try {
-      final state = context.read<AppState>();
-      // 兼容两种存储方式：新版用 restoreCombinationMode = last:/id:xxx，旧版用 last / saved
-      String toSave = mode;
-      // 映射：none -> none, last -> last:, saved(id) -> id:xxx
-      if (mode == 'none') toSave = 'none';
-      if (mode == 'last') toSave = 'last:';
-      if (mode == 'saved' && id != null) toSave = 'id:$id';
-
-      await state.api.command({
-        'command': 'set_settings',
-        'key': 'startup/restoreCombinationMode',
-        'value': toSave,
-      });
-      if (id != null) {
-        await state.api.command({
-          'command': 'set_settings',
-          'key': 'startup/restoreCombinationId',
-          'value': id,
-        });
-      } else if (mode == 'none' || mode == 'last' || mode == 'last:') {
-        // 清空旧 id，避免残留
-        await state.api.command({
-          'command': 'set_settings',
-          'key': 'startup/restoreCombinationId',
-          'value': '',
-        }).catchError((_) => <String, dynamic>{});
-      }
-      if (!mounted) return;
-      setState(() {
-        _startupModeRaw = toSave;
-        _startupId = id;
-      });
-      await _notify(
-        _t(context, 'Startup setting updated', '启动设置已更新'),
-        _t(context, 'Restore mode: $toSave', '恢复模式：$toSave'),
-        InfoBarSeverity.success,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      await _notify(_t(context, 'Failed to update', '更新失败'), e.toString(), InfoBarSeverity.error);
-    } finally {
-      if (mounted) setState(() => _savingStartup = false);
-    }
-  }
-
-  String _startupModeLabel(BuildContext context) {
-    final raw = _startupModeRaw;
-    if (raw == 'none') return _t(context, 'Do not restore', '不恢复');
-    if (raw == 'last' || raw == 'last:') return _t(context, 'Last before close', '上次关闭前的组合');
-    if (raw.startsWith('id:')) {
-      final id = raw.substring(3);
-      return _t(context, 'Saved: $id', '已保存：$id');
-    }
-    // 旧版 saved 模式存于另一键
-    if (_startupId != null && _startupId!.isNotEmpty) {
-      return _t(context, 'Saved: $_startupId', '已保存：$_startupId');
-    }
-    return raw;
-  }
 
   @override
   void initState() {
@@ -756,90 +640,6 @@ class _CombinationsPageState extends State<CombinationsPage> {
         ),
         const SizedBox(height: 8),
 
-        // 启动组合模式（与设置页同键，在组合页也要展示）
-        Card(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    isZh ? '启动时恢复组合' : 'Restore on startup',
-                    style: FluentTheme.of(context).typography.bodyStrong,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${isZh ? '当前' : 'Current'}: ${_startupModeLabel(context)}',
-                    style: FluentTheme.of(context).typography.caption,
-                  ),
-                  if (_startupModeRaw.startsWith('id:') || (_startupId != null && _startupId!.isNotEmpty))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        'ID: ${_startupModeRaw.startsWith('id:') ? _startupModeRaw.substring(3) : _startupId}',
-                        style: FluentTheme.of(context).typography.caption,
-                      ),
-                    ),
-                ]),
-              ),
-              const SizedBox(width: 12),
-              ComboBox<String>(
-                value: _startupModeRaw == 'none'
-                    ? 'none'
-                    : (_startupModeRaw.startsWith('id:') ? 'saved' : 'last'),
-                items: [
-                  ComboBoxItem(value: 'none', child: Text(isZh ? '不恢复' : 'Do not restore')),
-                  ComboBoxItem(value: 'last', child: Text(isZh ? '上次关闭前' : 'Last before close')),
-                  // 若有已保存组合，提供“已保存组合…”选项，实际 id 选择需通过下拉列出
-                  if (_items.where((e) => e.type == _CombinationType.saved).isNotEmpty)
-                    ComboBoxItem(value: 'saved', child: Text(isZh ? '指定已保存组合' : 'Saved combination')),
-                ],
-                onChanged: _savingStartup
-                    ? null
-                    : (v) {
-                        if (v == null) return;
-                        if (v == 'saved') {
-                          // 弹出选择已保存组合的对话框
-                          final saved = _items.where((e) => e.type == _CombinationType.saved).toList();
-                          showDialog<String>(
-                            context: context,
-                            builder: (ctx) => ContentDialog(
-                              title: Text(isZh ? '选择启动组合' : 'Choose startup combination'),
-                              content: SizedBox(
-                                height: 220,
-                                child: ListView(
-                                  children: saved
-                                      .map((e) => ListTile(
-                                            title: Text(e.displayName),
-                                            subtitle: Text(_combinationSummary(context, e)),
-                                            onPressed: () => Navigator.pop(ctx, e.id),
-                                          ))
-                                      .toList(),
-                                ),
-                              ),
-                              actions: [
-                                Button(
-                                  onPressed: () => Navigator.pop(ctx),
-                                  child: Text(isZh ? '取消' : 'Cancel'),
-                                ),
-                              ],
-                            ),
-                          ).then((chosen) {
-                            if (chosen != null) _setStartupMode('saved', id: chosen);
-                          });
-                        } else {
-                          _setStartupMode(v);
-                        }
-                      },
-              ),
-              if (_savingStartup) ...[
-                const SizedBox(width: 8),
-                const SizedBox(width: 16, height: 16, child: ProgressRing(strokeWidth: 2)),
-              ],
-            ]),
-          ),
-        ),
         const SizedBox(height: 8),
 
         if (_loading)
@@ -852,7 +652,7 @@ class _CombinationsPageState extends State<CombinationsPage> {
             margin: const EdgeInsets.symmetric(horizontal: 16),
             child: InfoBar(
               title: Text(isZh ? '无法读取组合列表' : 'Failed to load combinations'),
-              content: Text('$_error\n${isZh ? '请确认运行时已启动（需要 NEUROLINGSCE_HTTP=1）。' : 'Ensure the runtime is running (NEUROLINGSCE_HTTP=1).'}'),
+              content: Text('$_error\n${isZh ? '请确认运行时已启动，且设置页已启用 HTTP API（http/enabled）。' : 'Ensure the runtime is running and HTTP API is enabled (http/enabled).'}'),
               severity: InfoBarSeverity.warning,
               isLong: true,
             ),

@@ -1,3 +1,43 @@
+# 新旧实现对比与对齐状态（2026-08-23 更新）
+
+> 本文件早前版本（2026-08-21）所列的占位项已全部落地；以下为**当前**对齐状态。
+> 对齐基准仍为 CE v0.5.3（C++/Qt）；协议契约（CLI/IPC/HTTP/包格式）以 CE 源码为准。
+
+## 已完成对齐（此前差异已修复）
+
+- 版本号统一 0.5.3（workspace + About + CLI --version）。
+- CE 注册表数据无缝迁移：设置（HKCU\Software\pixelomer\Shijima-Qt → settings.json）、
+  组合（combinations/saved、lastBeforeClose → combinations.json）、GitHub 凭据（NeurolingsCE-GitHub）。
+- restoreCombinationMode 值域统一 none/last/saved+Id；组合以 epoch 毫秒 id 追加存储。
+- 单实例三段逻辑（startup 静默 / 普通弹管理器 / 竞态兜底）；CLI 默认超时对齐 500/500ms。
+- 默认模板内嵌虚拟化 @（不落盘、不可删、预览与帧走内嵌资源）；旧落盘 Default 自动清理。
+- 托盘：应用 ico 图标、Locale 双语（对齐 zh_CN.ts 译文）、左键/菜单切换现实窗口、
+  Show/Hide 按可见性取词、macOS NSStatusItem（交叉编译验证）。
+- 召唤落点跟随 Manager 所在屏（心跳上报）；Math.random 与引擎同源真随机。
+- 右键菜单四项中文对齐官方译文（召唤同伴/检查/只保留一个/全部清除）。
+- Codex：气泡队列 8/去重 60s-64/点击跳转 Codex 页/标题本地化/Markdown 标记剥离；
+  app-server 全流程（initialize/thread/turn/审批四决策/plan/user-input 问答，协议对齐 CE）。
+- 更新器整链：启动 1500ms 自动检查、ignore/remind（1 天）、下载 SHA-256 校验、
+  代理（system/direct/http/socks5）、安装器启动与退出；发现新版跳转 About 页。
+- Manager：标题/禁最大化/关闭行为（有桌宠隐藏、无桌宠确认退出）、状态栏、
+  Home 库语义（预览/详情/多选删除/Enter 与双击）、Create 三步转换器（zip→.mascot，
+  含 info.json 编辑器）、Settings 全行（Updates/代理/取色/语言即时生效）、
+  Store GitHub Device Flow 登录与投稿 UI、About 完整更新流与许可对话框、
+  l10n 全量双语（en/zh）、私有管理端口 32457（公开 API 契约不变）。
+- 会话日志对齐 AppLog（log/日期目录/行格式/级别环境变量）。
+- rar/7z/tar/tgz 导入补齐（解压到受控临时目录后统一分析/校验）。
+- 捆绑 agent 技能（neurolingsce-skill + companion）启动同步安装（15s 超时）。
+- Linux 自启收敛为 CE 的 Windows-only 语义。
+
+## 仍遗留（需维护者/真机）
+
+- Linux/macOS 需真机视觉验证（气泡在非 Windows 平台仍为占位；Linux 托盘占位）。
+- 投稿服务端、GitHub App、Pages 部署（客户端与 UI 已就绪）。
+- MSI 签名（WiX）发布流水线；CI golden diff 逐 tick 对比（需 Qt6/MSVC 环境）。
+- ElaWidgetTools 与 Fluent 控件外观存在像素级差异（语义/布局/交互已对齐）。
+- .opus 音频可导入但无解码器（rodio/symphonia 未含 opus）；HTTP 并发模型为每连接一线程。
+
+---
 # NeurolingsCE (C++) vs Neurolings-rs 详细对比分析报告
 
 **分析时间**: 2026-08-21  

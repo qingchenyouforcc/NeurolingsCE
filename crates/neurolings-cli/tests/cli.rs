@@ -19,7 +19,10 @@ fn parse_value(text: &str) -> Value {
 fn version_text() {
     let out = run_to_output(&args(&["NeurolingsCE-cli", "--version"]), None);
     assert_eq!(out.exit_code, 0);
-    assert_eq!(out.stdout, "NeurolingsCE 0.1.0\n");
+    assert_eq!(
+        out.stdout,
+        format!("NeurolingsCE {}\n", env!("CARGO_PKG_VERSION"))
+    );
     assert!(out.stderr.is_empty());
 }
 
@@ -193,7 +196,7 @@ fn mascot_list_on_temp_storage() {
     let templates = value["templates"].as_array().expect("templates array");
     assert_eq!(templates.len(), 3);
     assert_eq!(templates[0]["id"], 0);
-    assert_eq!(templates[0]["name"], "Default");
+    assert_eq!(templates[0]["name"], "@");
     assert_eq!(templates[1]["id"], 1);
     assert_eq!(templates[1]["name"], "Eviling");
     assert_eq!(templates[2]["id"], 2);
@@ -207,7 +210,7 @@ fn mascot_list_on_temp_storage() {
         Some(storage.clone()),
     );
     assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("[0] Default"));
+    assert!(out.stdout.contains("[0] @"));
     assert!(out.stdout.contains("[1] Eviling"));
     assert!(out.stdout.contains("[2] Zebra"));
     assert!(out.stdout.contains("  Version: 2.0"));

@@ -50,9 +50,7 @@ const NAME_BLACKLIST: &[&str] = &[
     "..",
     "",
 ];
-const UNSUPPORTED_EXTENSIONS: &[&str] = &[
-    "7z", "rar", "tar", "gz", "bz2", "xz", "tgz", "cab", "iso", "apk", "war", "ear",
-];
+const UNSUPPORTED_EXTENSIONS: &[&str] = &["gz", "bz2", "xz", "cab", "iso", "apk", "war", "ear"];
 const PREVIEW_FILE_NAMES: &[&str] = &["a.png", "cover.png"];
 
 /// 旧版压缩包中发现的一只候选桌宠。
@@ -207,9 +205,16 @@ impl LegacyArchive {
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase())
-            && UNSUPPORTED_EXTENSIONS.contains(&extension.as_str())
         {
-            return Err(PackError::Unsupported(format!(".{extension}")));
+            if UNSUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
+                return Err(PackError::Unsupported(format!(".{extension}")));
+            }
+            // rar/7z/tar/tgz：解压到受控临时目录后按目录分析（与原版 unarr 行为一致）。
+            if matches!(extension.as_str(), "rar" | "7z" | "tar" | "tgz") {
+                let tempdir = tempfile::tempdir()?;
+                extract_to_tempdir(archive_path, tempdir.path(), &extension)?;
+                return Self::open_from_directory(tempdir.path(), fallback_name);
+            }
         }
 
         let mut zip = zipio::open_zip(archive_path)?;
@@ -247,6 +252,61 @@ impl LegacyArchive {
             }
             total_bytes += raw.uncompressed_size;
             let data = zipio::read_zip_entry_bytes(&mut zip, index, raw.uncompressed_size)?;
+            let node_index = archive.entries.len();
+            archive.entries.push(EntryNode {
+                path: path.clone(),
+                data,
+                extension,
+                targets: Vec::new(),
+            });
+            archive.insert_into_tree(&path, node_index);
+        }
+
+        archive.analyze();
+        Ok(archive)
+    }
+
+    /// 从解压目录构建分析树（rar/7z/tar/tgz 的入口；规则与 zip 一致）。
+    pub fn open_from_directory(dir: &Path, fallback_name: &str) -> Result<Self> {
+        let mut archive = LegacyArchive {
+            fallback_name: fallback_name.to_string(),
+            entries: Vec::new(),
+            folders: vec![FolderNode {
+                name: "/".to_string(),
+                parent: None,
+                folders: BTreeMap::new(),
+                files: BTreeMap::new(),
+            }],
+            shimejis: BTreeSet::new(),
+            default_xml_targets: Vec::new(),
+        };
+
+        let mut total_bytes: u64 = 0;
+        for entry in walkdir::WalkDir::new(dir).follow_links(false) {
+            let entry = entry.map_err(|e| PackError::msg(format!("walk error: {e}")))?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = entry
+                .path()
+                .strip_prefix(dir)
+                .map_err(|_| PackError::msg("invalid archive layout"))?;
+            let rel_text = rel.to_string_lossy().replace('\\', "/");
+            let path = apply_conf_hack(&rel_text);
+            let lower_name = ascii_lower(last_component(&path));
+            let extension = file_extension(&lower_name);
+            if !zipio::ALLOWED_LEGACY_EXTENSIONS.contains(&extension.as_str()) {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if size > limits::MASCOT_SINGLE_FILE_MAX_BYTES {
+                return Err(PackError::msg("Mascot package entry is too large"));
+            }
+            if size > limits::MASCOT_EXTRACTED_MAX_BYTES - total_bytes {
+                return Err(PackError::msg("Mascot package extracted data is too large"));
+            }
+            total_bytes += size;
+            let data = std::fs::read(entry.path())?;
             let node_index = archive.entries.len();
             archive.entries.push(EntryNode {
                 path: path.clone(),
@@ -1371,4 +1431,86 @@ pub fn import_archive(archive_path: &Path, storage_path: &Path) -> Result<BTreeS
         }
     }
     Ok(imported)
+}
+
+/// 把 rar/7z/tar/tgz 解压到受控临时目录（文件名防目录逃逸）。
+pub(crate) fn extract_to_tempdir(archive_path: &Path, dest: &Path, extension: &str) -> Result<()> {
+    match extension {
+        "rar" => extract_rar_to(archive_path, dest),
+        "7z" => sevenz_rust2::decompress_file(archive_path, dest)
+            .map_err(|e| PackError::msg(format!("Failed to extract 7z archive: {e}"))),
+        "tar" => extract_tar_to(archive_path, dest, false),
+        "tgz" => extract_tar_to(archive_path, dest, true),
+        _ => Err(PackError::Unsupported(format!(".{extension}"))),
+    }
+}
+
+/// 解压单条到目标目录时防目录逃逸（拒绝绝对路径与 .. 组件）。
+fn safe_join(root: &Path, name: &Path) -> Option<std::path::PathBuf> {
+    let mut out = root.to_path_buf();
+    for component in name.components() {
+        match component {
+            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// 把条目内容写入目标路径（父目录自动创建）。
+fn write_entry(dest: &Path, name: &Path, data: &[u8]) -> Result<()> {
+    let Some(target) = safe_join(dest, name) else {
+        return Ok(());
+    };
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&target, data).map_err(Into::into)
+}
+
+fn extract_rar_to(archive_path: &Path, dest: &Path) -> Result<()> {
+    let mut archive = unrar::Archive::new(archive_path)
+        .open_for_processing()
+        .map_err(|e| PackError::msg(format!("Failed to open rar archive: {e}")))?;
+    while let Some(cursor) = archive
+        .read_header()
+        .map_err(|e| PackError::msg(format!("rar read error: {e}")))?
+    {
+        let name = cursor.entry().filename.clone();
+        let (data, rest) = cursor
+            .read()
+            .map_err(|e| PackError::msg(format!("rar extract error: {e}")))?;
+        write_entry(dest, &name, &data)?;
+        archive = rest;
+    }
+    Ok(())
+}
+
+fn extract_tar_to(archive_path: &Path, dest: &Path, gzipped: bool) -> Result<()> {
+    let file = std::fs::File::open(archive_path)?;
+    let reader: Box<dyn std::io::Read> = if gzipped {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut archive = tar::Archive::new(reader);
+    for entry in archive
+        .entries()
+        .map_err(|e| PackError::msg(format!("tar read error: {e}")))?
+    {
+        let mut entry = entry.map_err(|e| PackError::msg(format!("tar entry error: {e}")))?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let name = entry
+            .path()
+            .map_err(|e| PackError::msg(format!("tar path error: {e}")))?
+            .to_path_buf();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut data)
+            .map_err(|e| PackError::msg(format!("tar extract error: {e}")))?;
+        write_entry(dest, &name, &data)?;
+    }
+    Ok(())
 }

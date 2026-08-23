@@ -24,11 +24,33 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rquickjs::context::EvalOptions;
 use rquickjs::{Context, Runtime};
 
 use crate::environment::{Area, DArea, HBorder};
 use crate::state::SharedState;
+
+thread_local! {
+    /// 无环境上下文（测试/独立求值）时的兜底随机流。
+    static FALLBACK_RNG: RefCell<Option<StdRng>> = const { RefCell::new(None) };
+}
+
+/// 从当前环境的 RNG 取 [0,1) 随机数——与原版一致，
+/// Math.random 与行为选择共用同一条真随机流；无环境时用系统熵兜底。
+fn rust_random_value(state: &Rc<RefCell<Option<SharedState>>>) -> f64 {
+    if let Some(state_rc) = state.borrow().clone() {
+        let s = state_rc.borrow();
+        if let Some(env) = &s.env {
+            return env.borrow_mut().random();
+        }
+    }
+    FALLBACK_RNG.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        guard.get_or_insert_with(StdRng::from_os_rng).random()
+    })
+}
 
 /// 非严格模式求值选项：桌宠脚本依赖 `with` 语句实现作用域链，必须关闭严格模式。
 fn sloppy() -> EvalOptions {
@@ -172,7 +194,7 @@ impl Drop for ScopeGuard<'_> {
 pub struct ScriptContext {
     _runtime: Runtime,
     context: Context,
-    pub state: RefCell<Option<SharedState>>,
+    pub state: Rc<RefCell<Option<SharedState>>>,
     deadline: Rc<Cell<Option<Instant>>>,
     scope_counter: Cell<u64>,
     /// 当前活动作用域编号；0 表示无活动作用域。
@@ -190,23 +212,33 @@ impl ScriptContext {
             })));
         }
         let context = Context::full(&runtime).expect("创建 QuickJS 上下文失败");
-        context.with(|ctx| {
-            // 作用域容器；console 输出直接丢弃；Math.random 用确定性序列，
+        let state: Rc<RefCell<Option<SharedState>>> = Rc::new(RefCell::new(None));
+        {
+            // Math.random 走环境 RNG（真随机、与行为选择同源），
             // 并支持 `Math.random * x` 写法（部分桌宠包依赖 valueOf 求值）。
-            ctx.eval_with_options::<(), _>(
-                "globalThis.__scopes=Object.create(null);\
-                 var console={log:function(){},error:function(){}};\
-                 (function(){var s=123456789;\
-                 var r=function(){s=(s*1103515245+12345)>>>0;return (s>>>8)/16777216;};\
-                 r.valueOf=r;Math.random=r;})();",
-                sloppy(),
-            )
-            .ok();
-        });
+            let state_for_rng = state.clone();
+            context.with(|ctx| {
+                let rust_random = rquickjs::Function::new(ctx.clone(), move || -> f64 {
+                    rust_random_value(&state_for_rng)
+                })
+                .expect("注册随机函数失败");
+                ctx.globals()
+                    .set("__rustRandom", rust_random)
+                    .expect("安装随机函数失败");
+                ctx.eval_with_options::<(), _>(
+                    "globalThis.__scopes=Object.create(null);\
+                     var console={log:function(){},error:function(){}};\
+                     (function(){var r=function(){return __rustRandom();};\
+                     r.valueOf=r;Math.random=r;})();",
+                    sloppy(),
+                )
+                .ok();
+            });
+        }
         Rc::new(Self {
             _runtime: runtime,
             context,
-            state: RefCell::new(None),
+            state,
             deadline,
             scope_counter: Cell::new(0),
             active_scope: Cell::new(0),
@@ -619,5 +651,18 @@ mod tests {
         let ctx = ScriptContext::new();
         let n = ctx.eval_number("Math.random * 10");
         assert!((0.0..10.0).contains(&n), "valueOf 应支持算术运算: {n}");
+    }
+
+    #[test]
+    fn math_random_is_not_deterministic_across_contexts() {
+        // 与原版一致：无环境时走系统熵，两个上下文的序列不应逐值相同。
+        let a = ScriptContext::new();
+        let b = ScriptContext::new();
+        let seq_a: Vec<f64> = (0..16).map(|_| a.eval_number("Math.random()")).collect();
+        let seq_b: Vec<f64> = (0..16).map(|_| b.eval_number("Math.random()")).collect();
+        assert_ne!(seq_a, seq_b, "Math.random 不应是固定种子序列");
+        for v in &seq_a {
+            assert!((0.0..1.0).contains(v), "Math.random 应返回 [0,1): {v}");
+        }
     }
 }

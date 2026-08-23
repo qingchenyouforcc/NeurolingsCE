@@ -1,5 +1,6 @@
 //! 模板发现与加载：从存储目录（.mascot 包/解压目录）或散开目录加载，
 //! 并维护运行期模板注册表（导入/移除/重载）。
+//! 默认桌宠是从内嵌资源构建的虚拟模板（名为 @，不落盘、不可删除）。
 
 use std::collections::HashMap;
 use std::fs;
@@ -8,9 +9,12 @@ use std::path::{Path, PathBuf};
 use neurolings_engine::mascot::Template;
 use neurolings_pack::metadata::MascotMetadata;
 
-/// 内置默认桌宠（首次运行时安装到存储目录）。
+/// 内置默认桌宠资源（虚拟模板 @ 的内容来源）。
 pub static DEFAULT_MASCOT: include_dir::Dir =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../assets/DefaultMascot");
+
+/// 默认模板名（与原版内嵌虚拟模板一致，不可作为文件系统目录名）。
+pub const DEFAULT_TEMPLATE_NAME: &str = "@";
 
 /// 一个已加载模板的完整信息。
 pub struct LoadedTemplate {
@@ -19,6 +23,8 @@ pub struct LoadedTemplate {
     pub actions_xml: String,
     pub behaviors_xml: String,
     pub metadata: MascotMetadata,
+    /// 内嵌虚拟模板：无磁盘目录，不可删除、无包级音效/气泡文件。
+    pub virtual_: bool,
 }
 
 impl LoadedTemplate {
@@ -32,7 +38,6 @@ impl LoadedTemplate {
         }
     }
 }
-
 /// 运行期模板注册表：名称、元数据与包目录的查询入口。
 #[derive(Default)]
 pub struct TemplateStore {
@@ -46,22 +51,28 @@ impl TemplateStore {
         Self::default()
     }
 
-    /// 注册一个已加载模板。
+    /// 注册一个已加载模板（虚拟模板不记录包目录）。
     pub fn register(&mut self, template: &LoadedTemplate) {
         if !self.names.iter().any(|n| n == &template.name) {
             self.names.push(template.name.clone());
         }
         self.metadata
             .insert(template.name.clone(), template.metadata.clone());
-        self.pack_dirs
-            .insert(template.name.clone(), template.dir.clone());
+        if !template.virtual_ {
+            self.pack_dirs
+                .insert(template.name.clone(), template.dir.clone());
+        }
     }
 
-    /// 注销模板。
-    pub fn deregister(&mut self, name: &str) {
+    /// 注销模板（虚拟模板不可注销）。
+    pub fn deregister(&mut self, name: &str) -> bool {
+        if name == DEFAULT_TEMPLATE_NAME {
+            return false;
+        }
         self.names.retain(|n| n != name);
         self.metadata.remove(name);
         self.pack_dirs.remove(name);
+        true
     }
 
     /// 按名称升序排列的模板名列表。
@@ -109,6 +120,29 @@ fn load_dir(dir: &Path) -> Option<LoadedTemplate> {
         actions_xml,
         behaviors_xml,
         metadata,
+        virtual_: false,
+    })
+}
+
+/// 从内嵌资源构建默认虚拟模板（名为 @，不落盘、不可删除）。
+pub fn load_default_virtual() -> Option<LoadedTemplate> {
+    let read = |path: &str| -> Option<String> {
+        DEFAULT_MASCOT
+            .get_file(path)
+            .map(|f| String::from_utf8_lossy(f.contents()).into_owned())
+    };
+    let actions_xml = read("actions.xml")?;
+    let behaviors_xml = read("behaviors.xml")?;
+    let metadata: MascotMetadata = read("info.json")
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    Some(LoadedTemplate {
+        name: DEFAULT_TEMPLATE_NAME.to_string(),
+        dir: PathBuf::new(),
+        actions_xml,
+        behaviors_xml,
+        metadata,
+        virtual_: true,
     })
 }
 
@@ -162,29 +196,39 @@ pub fn load_from_storage(storage: &Path, cache: &Path) -> Vec<LoadedTemplate> {
     out
 }
 
-/// 首次运行时把内置默认桌宠安装到存储目录。
-pub fn install_default_if_missing(storage: &Path) {
-    let target = storage.join("Default");
-    if target.join("actions.xml").is_file() {
-        return;
+/// 初始化存储目录：写入警示 README（不覆盖已有文件），
+/// 并清理早期版本落盘的默认模板目录（内容与内嵌一致才删除）。
+pub fn prepare_storage(storage: &Path) {
+    let _ = fs::create_dir_all(storage);
+    // README 内容对齐原版 ManagerWindowSetup（NewOnly 语义：已存在则跳过）。
+    let readme = storage.join("README.txt");
+    if !readme.is_file() {
+        let _ = fs::write(
+            &readme,
+            "Manually importing shimeji by copying its contents into this folder may\n\
+             cause problems. You should use the import dialog in Shijima-Qt unless you\n\
+             have a good reason not to.\n",
+        );
     }
-    let _ = fs::create_dir_all(&target);
-    extract_embedded_dir(&DEFAULT_MASCOT, &target);
+    cleanup_legacy_default(storage);
 }
 
-fn extract_embedded_dir(dir: &include_dir::Dir, target: &Path) {
-    for file in dir.files() {
-        let Some(name) = file.path().file_name() else {
-            continue;
-        };
-        let _ = fs::write(target.join(name), file.contents());
+/// 早期版本把默认桌宠落盘到 <storage>/Default；默认模板已改为内嵌虚拟
+/// 模板 @，目录内容与内嵌一致时删除，被用户改动过则保留为普通模板。
+fn cleanup_legacy_default(storage: &Path) {
+    let legacy = storage.join("Default");
+    if !legacy.join("actions.xml").is_file() {
+        return;
     }
-    for subdir in dir.dirs() {
-        let Some(name) = subdir.path().file_name() else {
-            continue;
-        };
-        let sub_target = target.join(name);
-        let _ = fs::create_dir_all(&sub_target);
-        extract_embedded_dir(subdir, &sub_target);
+    let matches_embedded = ["actions.xml", "behaviors.xml", "info.json"]
+        .iter()
+        .all(|name| {
+            legacy.join(name).is_file()
+                && DEFAULT_MASCOT.get_file(name).is_some_and(|f| {
+                    fs::read(legacy.join(name)).is_ok_and(|bytes| bytes == f.contents())
+                })
+        });
+    if matches_embedded {
+        let _ = fs::remove_dir_all(&legacy);
     }
 }

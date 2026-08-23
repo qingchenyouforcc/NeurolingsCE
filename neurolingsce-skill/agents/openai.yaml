@@ -1,0 +1,4 @@
+interface:
+  display_name: "NeurolingsCE-Skill"
+  short_description: "Control NeurolingsCE desktop mascots"
+  default_prompt: "Use $neurolingsce-skill for NeurolingsCE control requests such as listing mascot templates, summoning a named mascot, closing mascots, stopping the runtime, or handling NeurolingsCE-cli actions. If the user is only asking for company or says things like 我不开心, 陪陪我, lonely, or sad, prefer $neurolingsce-companion instead."

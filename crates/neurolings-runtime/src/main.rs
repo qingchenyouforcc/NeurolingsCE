@@ -7,17 +7,21 @@
 //! - `--smoke [ticks]`：无窗口自检（CI 用）。
 
 mod codex;
+mod codex_appserver;
 mod combinations;
 mod fallthrough;
 mod headless;
 mod http;
 mod ipc;
+mod log;
+mod migrate;
 mod runtime;
 mod services;
 mod settings;
 mod templates;
 #[cfg(windows)]
 mod tray;
+mod update;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -118,7 +122,7 @@ fn main() -> ExitCode {
         }
     }
 
-    let loaded = if let Some(dir) = &pack_dir {
+    let mut loaded = if let Some(dir) = &pack_dir {
         templates::load_from_dir(dir)
     } else {
         let storage = match neurolings_pack::storage::default_storage_path() {
@@ -128,8 +132,14 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        let app_data = storage.parent().map(PathBuf::from).unwrap_or_default();
         if !headless {
-            templates::install_default_if_missing(&storage);
+            // 会话日志尽早初始化，覆盖迁移与模板加载阶段。
+            log::init(&app_data);
+            // 一次性迁移 CE 旧版注册表数据（设置/组合），并清洗历史键值。
+            migrate::run_once(&app_data);
+            // 写入存储目录 README 并清理早期版本的落盘默认模板。
+            templates::prepare_storage(&storage);
         }
         let cache = storage
             .parent()
@@ -138,6 +148,11 @@ fn main() -> ExitCode {
         let _ = std::fs::create_dir_all(&cache);
         templates::load_from_storage(&storage, &cache)
     };
+
+    // 默认模板为内嵌虚拟模板 @：不落盘、不可删除（对齐原版）。
+    if let Some(default) = templates::load_default_virtual() {
+        loaded.insert(0, default);
+    }
 
     if loaded.is_empty() {
         eprintln!("no mascot templates found");
@@ -148,8 +163,6 @@ fn main() -> ExitCode {
     let screen = if headless {
         fake_screen()
     } else {
-        #[cfg(windows)]
-        tray::init();
         match neurolings_platform::create_backend() {
             Ok(backend) => backend
                 .screens()
@@ -160,16 +173,25 @@ fn main() -> ExitCode {
         }
     };
 
-    // HTTP 由设置项 http/enabled 控制（默认关闭）。
-    let enable_http = if headless {
-        false
+    // HTTP 由设置项 http/enabled 控制（默认关闭）；托盘菜单语言同源读取。
+    let (enable_http, locale) = if headless {
+        (false, settings::Locale::En)
     } else {
         let app_data_dir = neurolings_pack::storage::default_storage_path()
             .and_then(|p| p.parent().map(PathBuf::from))
             .unwrap_or_default();
         let settings = Settings::load(&app_data_dir);
-        settings.get_bool(settings::KEY_HTTP_ENABLED, false)
+        (
+            settings.get_bool(settings::KEY_HTTP_ENABLED, false),
+            settings.locale(),
+        )
     };
+
+    #[cfg(windows)]
+    if !headless {
+        let names: Vec<String> = loaded.iter().map(|t| t.name.clone()).collect();
+        tray::init(&names, locale);
+    }
 
     let opts = RuntimeOptions {
         templates: loaded,
@@ -183,7 +205,44 @@ fn main() -> ExitCode {
         startup_mode,
     };
 
-    match runtime::run(opts) {
+    // 单实例预检（对齐原版三段逻辑）：已有实例时，
+    // 自启/CLI 模式静默退出；普通启动请已有实例弹管理器后退出。
+    if !headless {
+        let running = ipc::client_call(
+            &serde_json::json!({ "command": "ping" }),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+        if running {
+            if cli_runtime_mode || startup_mode {
+                return ExitCode::SUCCESS;
+            }
+            let _ = ipc::client_call(
+                &serde_json::json!({ "command": "show_manager" }),
+                std::time::Duration::from_millis(500),
+            );
+            return ExitCode::SUCCESS;
+        }
+    }
+
+    // 捆绑的 agent 技能同步安装（Windows，对齐原版 15 秒超时语义）。
+    if !headless {
+        sync_bundled_skills();
+    }
+
+    // 启动自动更新检查（1500ms 延迟，对齐原版）。
+    if !headless {
+        let app_data = neurolings_pack::storage::default_storage_path()
+            .and_then(|p| p.parent().map(PathBuf::from))
+            .unwrap_or_default();
+        crate::update::start_startup_check(app_data);
+    }
+
+    let result = runtime::run(opts);
+    if !headless {
+        crate::log::shutdown();
+    }
+    match result {
         Ok(ticks) => {
             if headless {
                 println!("smoke ok: {count} template(s), {ticks} ticks");
@@ -192,7 +251,10 @@ fn main() -> ExitCode {
         }
         Err(err) => {
             if err.contains("already running") {
-                // 单实例行为：请已有实例拉起管理器后安静退出。
+                // 竞态兜底（预检后瞬间被占用）：按启动模式决定静默或弹管理器。
+                if cli_runtime_mode || startup_mode {
+                    return ExitCode::SUCCESS;
+                }
                 let _ = ipc::client_call(
                     &serde_json::json!({ "command": "show_manager" }),
                     std::time::Duration::from_millis(500),
@@ -204,3 +266,73 @@ fn main() -> ExitCode {
         }
     }
 }
+
+/// 安装捆绑的 agent 技能到 Codex home（对齐原版 syncBundledSkillsForCurrentUser）：
+/// 找到 neurolingsce-skill/scripts/install_to_codex_home.ps1 后以
+/// powershell 运行，启动 5 秒、完成 15 秒超时，超时即终止。
+#[cfg(windows)]
+fn sync_bundled_skills() {
+    use std::process::Command;
+
+    let app_root = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default();
+    // 打包分发时脚本位于 exe 旁；开发环境回退到仓库内的捆绑目录。
+    let mut candidates = vec![
+        app_root.join("neurolingsce-skill/scripts/install_to_codex_home.ps1"),
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../neurolingsce-skill/scripts/install_to_codex_home.ps1"
+        )),
+    ];
+    // AppRoot 需指向同时包含 neurolingsce-skill 与 neurolingsce-companion 的根。
+    let app_roots = [
+        &app_root,
+        &PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
+    ];
+    let Some(index) = candidates.iter().position(|c| c.is_file()) else {
+        return;
+    };
+    let script = candidates.remove(index);
+    // 打包分发时脚本与 AppRoot 均为 exe 旁；开发环境均为仓库根。
+    let selected_root = if index == 0 { &app_root } else { app_roots[1] };
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
+    command.arg(&script);
+    command.arg("-AppRoot");
+    command.arg(selected_root);
+    match command.spawn() {
+        Ok(mut child) => {
+            // 完成超时 15 秒（对齐原版）；启动失败即放弃。
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        crate::log::info("startup", "bundled skills install finished");
+                        break;
+                    }
+                    Ok(None) if std::time::Instant::now() >= deadline => {
+                        let _ = child.kill();
+                        crate::log::warn("startup", "bundled skills install timed out");
+                        break;
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    Err(e) => {
+                        crate::log::warn("startup", &format!("bundled skills install failed: {e}"));
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            crate::log::warn(
+                "startup",
+                &format!("could not start bundled skill install script: {e}"),
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn sync_bundled_skills() {}

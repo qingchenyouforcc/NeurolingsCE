@@ -48,7 +48,9 @@ mod win {
         let key = open_key(REG_SAM_FLAGS(KEY_READ.0 | KEY_WRITE.0))?;
         let name = wide(APP_NAME);
         let result = if enabled {
-            let value = wide_bytes(&format!("\"{exe_path}\" --neurolingsce-startup"));
+            // 引号内双引号转义（对齐原版 quoteProcessArgument）。
+            let escaped = exe_path.replace('"', "\\\"");
+            let value = wide_bytes(&format!("\"{escaped}\" --neurolingsce-startup"));
             unsafe { RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&value)) }
                 .ok()
                 .map_err(|e| PlatformError::Win32(format!("set run value: {e}")))
@@ -87,38 +89,15 @@ mod win {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::APP_NAME;
     use crate::PlatformResult;
 
-    fn autostart_path() -> std::path::PathBuf {
-        let home = std::env::var("HOME").unwrap_or_default();
-        std::path::PathBuf::from(home)
-            .join(".config")
-            .join("autostart")
-            .join("neurolingsce.desktop")
-    }
-
-    pub fn set_autostart(enabled: bool, exe_path: &str) -> PlatformResult<()> {
-        let path = autostart_path();
-        if enabled {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let entry = format!(
-                "[Desktop Entry]\nType=Application\nName={APP_NAME}\nExec=\"{exe_path}\" --neurolingsce-startup\nX-GNOME-Autostart-enabled=true\n"
-            );
-            std::fs::write(&path, entry).map_err(|e| crate::PlatformError::Win32(e.to_string()))
-        } else {
-            match std::fs::remove_file(&path) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(crate::PlatformError::Win32(e.to_string())),
-            }
-        }
+    // 对齐原版：开机自启仅 Windows 支持（CE 在其他平台直接返回 Windows only）。
+    pub fn set_autostart(_enabled: bool, _exe_path: &str) -> PlatformResult<()> {
+        Err(crate::PlatformError::Unsupported)
     }
 
     pub fn is_autostart_enabled() -> PlatformResult<bool> {
-        Ok(autostart_path().exists())
+        Ok(false)
     }
 }
 

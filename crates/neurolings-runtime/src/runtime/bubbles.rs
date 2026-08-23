@@ -66,6 +66,48 @@ pub fn load_bubble_texts(
     vec!["Hello!".into(), "Hi there~".into(), "(^_^)".into()]
 }
 
+/// Codex 气泡正文的 Markdown 对齐处理（GDI 无富文本，做标记剥离）：
+/// 链接保留文字去掉目标、代码围栏删除、行内标记去掉定界符。
+pub fn strip_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim();
+        // 代码块围栏行整行丢弃。
+        if trimmed.starts_with("```") {
+            continue;
+        }
+        let mut cleaned = String::with_capacity(line.len());
+        let mut rest = line;
+        while let Some(start) = rest.find('[') {
+            cleaned.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            // [label](url) → label；未配对则保留原字符。
+            if let (Some(label_end), Some(url_start)) = (after.find(']'), after.find("]("))
+                && label_end < url_start
+            {
+                cleaned.push_str(&after[..label_end]);
+                let tail = &after[url_start + 2..];
+                match tail.find(')') {
+                    Some(close) => rest = &tail[close + 1..],
+                    None => {
+                        cleaned.push(']');
+                        rest = after;
+                    }
+                }
+                continue;
+            }
+            cleaned.push('[');
+            rest = after;
+        }
+        cleaned.push_str(rest);
+        // 行内标记定界符剥离。
+        let cleaned = cleaned.replace("**", "");
+        out.push_str(&cleaned);
+        out.push('\n');
+    }
+    out.trim_end_matches('\n').to_string()
+}
+
 /// 从文案列表随机取一条。
 pub fn random_bubble_text(texts: &[String], roll: usize) -> String {
     if texts.is_empty() {
@@ -82,14 +124,35 @@ pub fn process_bubbles(
     let now = Instant::now();
 
     for session in sessions.iter_mut() {
-        let codex = session.pending_codex_bubble.take();
-        let plain = session.pending_bubble.take();
+        // 上一条气泡显示中：新入队的 Codex 气泡等待（队列上限 8，满时丢最旧）。
+        let busy = session.bubble_window.is_some() && now < session.bubble_until;
+        let codex = if busy {
+            None
+        } else {
+            session.codex_bubble_queue.pop_front()
+        };
+        let plain = if codex.is_none() && !busy {
+            session.pending_bubble.take()
+        } else {
+            None
+        };
+        if session.codex_bubble_queue.len() > 8 {
+            let drop_count = session.codex_bubble_queue.len() - 8;
+            session.codex_bubble_queue.drain(0..drop_count);
+        }
         let incoming = match (codex, plain) {
             (Some((title, body, ttl)), _) => Some((title, body, ttl)),
             (None, Some(text)) => Some((String::new(), text, BUBBLE_TTL)),
             (None, None) => None,
         };
 
+        let incoming = incoming.map(|(title, body, ttl)| {
+            if title.is_empty() {
+                (title, body, ttl)
+            } else {
+                (title, strip_markdown(&body), ttl)
+            }
+        });
         if let Some((_title, body, ttl)) = incoming {
             if let Ok((bitmap, width, height)) = bubble::render_bubble(&body, 260) {
                 session.bubble_bitmap = Some(bitmap.clone());
@@ -113,6 +176,7 @@ pub fn process_bubbles(
                     let _ = window.update_frame(&bitmap, width, height, top_left);
                 }
                 session.bubble_until = now + ttl;
+                session.bubble_is_codex = !_title.is_empty();
             }
         } else if session.bubble_window.is_some() && now < session.bubble_until {
             // 跟随桌宠移动（位图不变，只更新位置）。
@@ -132,6 +196,7 @@ pub fn process_bubbles(
         // 过期回收。
         if session.bubble_window.is_some() && now >= session.bubble_until {
             session.bubble_window = None;
+            session.bubble_is_codex = false;
         }
     }
 }

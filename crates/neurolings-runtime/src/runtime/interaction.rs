@@ -326,13 +326,14 @@ impl MenuLabels {
                 dismiss: "Dismiss",
             },
             Locale::ZhCn => Self {
+                // 译文与原版 translations/shijima-qt_zh_CN.ts 逐条一致。
                 behaviors: "行为",
                 pause: "暂停",
-                call_another: "再来一只",
+                call_another: "召唤同伴",
                 show_manager: "显示管理器",
-                inspect: "检查器",
-                dismiss_others: "只保留这只",
-                dismiss_all: "全部关闭",
+                inspect: "检查",
+                dismiss_others: "只保留一个",
+                dismiss_all: "全部清除",
                 dismiss: "关闭",
             },
         }

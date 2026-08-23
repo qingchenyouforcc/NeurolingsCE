@@ -15,8 +15,9 @@ use serde_json::{Value, json};
 use crate::commands::{CliExecutionResult, MascotInfo};
 use crate::parser::{CliCommand, CliCommandKind, CliError, CliGlobalOptions};
 
-const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 8000;
-const DEFAULT_READ_TIMEOUT_MS: u64 = 5000;
+// 默认超时与原版一致（0.5s/0.5s）：快速失败，避免脚本长时间挂起。
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 500;
+const DEFAULT_READ_TIMEOUT_MS: u64 = 500;
 
 fn ipc_call(request: &Value, timeout: Duration) -> Result<Value, CliError> {
     let line = serde_json::to_string(request).map_err(|e| {
@@ -91,10 +92,17 @@ fn ensure_runtime(command: &CliCommand) -> Result<(), CliError> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        // 与原版 startDetached 语义一致：脱离父进程，不共享控制台与管道，
+        // 避免 runtime 常驻导致调用方（shell/脚本）等待其退出。
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
         let started = std::process::Command::new(&exe)
             .arg("--neurolingsce-cli-runtime")
-            .creation_flags(CREATE_NO_WINDOW)
+            .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn();
         if started.is_err() {
             let mut error = CliError::new(
@@ -110,6 +118,9 @@ fn ensure_runtime(command: &CliCommand) -> Result<(), CliError> {
     {
         let started = std::process::Command::new(&exe)
             .arg("--neurolingsce-cli-runtime")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn();
         if started.is_err() {
             let mut error = CliError::new(

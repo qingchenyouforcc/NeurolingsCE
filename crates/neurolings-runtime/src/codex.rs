@@ -94,12 +94,11 @@ fn previous_notify_from_block(content: &str, start: usize, end: usize) -> Option
             if trimmed.is_empty() {
                 continue;
             }
-            if let Ok(decoded) = BASE64.decode(trimmed.as_bytes()) {
-                if let Ok(s) = String::from_utf8(decoded) {
-                    if !s.is_empty() {
-                        return Some(s);
-                    }
-                }
+            if let Ok(decoded) = BASE64.decode(trimmed.as_bytes())
+                && let Ok(s) = String::from_utf8(decoded)
+                && !s.is_empty()
+            {
+                return Some(s);
             }
             return None;
         }
@@ -154,11 +153,11 @@ fn find_legacy_block(content: &str, managed: Option<(usize, usize)>) -> Option<(
     while let Some(idx) = content[pos..].find("notify") {
         let abs = pos + idx;
         // 检查是否在 managed 块内
-        if let Some((ms, me)) = managed {
-            if abs >= ms && abs < me {
-                pos = abs + 6;
-                continue;
-            }
+        if let Some((ms, me)) = managed
+            && (ms..me).contains(&abs)
+        {
+            pos = abs + 6;
+            continue;
         }
         // 行首允许空格
         let line_start = content[..abs].rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -187,14 +186,14 @@ fn find_legacy_block(content: &str, managed: Option<(usize, usize)>) -> Option<(
         let bytes = after_eq.as_bytes();
         let mut end_quote: Option<usize> = None;
         let mut escaped = false;
-        for i in fq + 1..bytes.len() {
+        for (i, &byte) in bytes.iter().enumerate().skip(fq + 1) {
             if escaped {
                 escaped = false;
                 continue;
             }
-            if bytes[i] == b'\\' {
+            if byte == b'\\' {
                 escaped = true;
-            } else if bytes[i] == b'"' {
+            } else if byte == b'"' {
                 end_quote = Some(i);
                 break;
             }
@@ -276,17 +275,17 @@ fn external_notify_lines(
             pos = abs + 6;
             continue;
         }
-        if let Some((ms, me)) = managed {
-            if abs >= ms && abs < me {
-                pos = abs + 6;
-                continue;
-            }
+        if let Some((ms, me)) = managed
+            && (ms..me).contains(&abs)
+        {
+            pos = abs + 6;
+            continue;
         }
-        if let Some((ls, le)) = legacy {
-            if abs >= ls && abs < le {
-                pos = abs + 6;
-                continue;
-            }
+        if let Some((ls, le)) = legacy
+            && (ls..le).contains(&abs)
+        {
+            pos = abs + 6;
+            continue;
         }
         let line_end = content[abs..]
             .find('\n')
@@ -328,6 +327,8 @@ fn write_atomically(path: &Path, content: &str) -> Result<Option<PathBuf>, Strin
     Ok(backup)
 }
 
+/// 仅测试使用的辅助：移除托管块后的文本（禁用路径的简化版）。
+#[cfg(test)]
 fn strip_block(text: &str) -> String {
     if let Some((s, e)) = find_managed_block(text) {
         let mut out = String::new();

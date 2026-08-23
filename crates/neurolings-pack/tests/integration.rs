@@ -233,17 +233,23 @@ fn unsupported_archive_formats_are_rejected() {
     let fake = temp.path().join("legacy.7z");
     std::fs::write(&fake, b"not really a 7z file").unwrap();
 
+    // 已支持的格式（rar/7z）收到损坏文件时报解压错误（而非 Unsupported）。
     let storage = temp.path().join("storage");
     let error = import_archive(&fake, &storage).unwrap_err();
-    assert!(matches!(error, PackError::Unsupported(_)), "{error:?}");
-    assert!(error.to_string().contains("7z"));
+    assert!(!matches!(error, PackError::Unsupported(_)), "{error:?}");
 
     let analysis = analyze_legacy_archive(&fake);
     assert!(!analysis.ok);
-    assert!(analysis.error_message.contains("7z"));
+    assert!(!analysis.error_message.is_empty());
 
     let fake_rar = temp.path().join("legacy.rar");
     std::fs::rename(&fake, &fake_rar).unwrap();
     let error = import_archive(&fake_rar, &storage).unwrap_err();
-    assert!(matches!(error, PackError::Unsupported(_)));
+    assert!(!matches!(error, PackError::Unsupported(_)));
+
+    // 真正不支持的格式仍返回 Unsupported。
+    let fake_iso = temp.path().join("legacy.iso");
+    std::fs::write(&fake_iso, b"not really an iso file").unwrap();
+    let error = import_archive(&fake_iso, &storage).unwrap_err();
+    assert!(matches!(error, PackError::Unsupported(_)), "{error:?}");
 }

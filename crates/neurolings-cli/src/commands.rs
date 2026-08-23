@@ -149,10 +149,10 @@ pub fn list_standalone_loaded_mascots(storage: &Path) -> Vec<LoadedMascotInfo> {
     templates
 }
 
-/// 内置默认模板的元数据。
+/// 内置默认模板的元数据（虚拟模板 @，与运行时内嵌一致）。
 fn default_metadata() -> MascotMetadata {
     MascotMetadata {
-        name: "Default".to_string(),
+        name: "@".to_string(),
         version: "1.0".to_string(),
         description: "Default mascot for the application.".to_string(),
         author: "pixelomer[https://github.com/pixelomer]".to_string(),
@@ -241,7 +241,7 @@ pub fn remove_standalone_mascot_template(
             2,
         ));
     }
-    if name == "Default" || name == "Default Mascot" {
+    if name == "@" || name == "Default" || name == "Default Mascot" {
         return Err(CliError::new(
             "mascot_template_not_deletable",
             "Mascot template cannot be deleted",

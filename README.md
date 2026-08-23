@@ -43,14 +43,15 @@ cd manager && flutter pub get && flutter build windows --release
 
 # CLI 控制
 .\target\release\NeurolingsCE-cli.exe --json --mascot list
-.\target\release\NeurolingsCE-cli.exe --json --summon mascot --name Default 1
+.\target\release\NeurolingsCE-cli.exe --json --summon mascot --name @ 1
 .\target\release\NeurolingsCE-cli.exe --json --list
 .\target\release\NeurolingsCE-cli.exe --json --stop
 
 # 无窗口自检（CI 用）
 .\target\release\NeurolingsCE.exe --smoke 300
 
-# HTTP API（需 NEUROLINGSCE_HTTP=1 启动运行时）
+# HTTP API（公开端口由设置页「更新」/HTTP 相关，或设置 update/checkOnStartup 同组的
+# http/enabled 控制默认关闭；Manager 内部经私有管理端口 32457 通信，开箱即用）
 curl http://127.0.0.1:32456/shijima/api/v1/ping
 ```
 

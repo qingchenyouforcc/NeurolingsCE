@@ -13,14 +13,14 @@ use crate::services::{self, PendingCommand};
 
 const API_BASE: &str = "/shijima/api/v1";
 
-pub fn serve(tx: Sender<PendingCommand>) {
-    let Ok(listener) = TcpListener::bind((
-        neurolings_common::api::HTTP_HOST,
-        neurolings_common::api::HTTP_PORT,
-    )) else {
-        eprintln!("HTTP API: failed to bind 127.0.0.1:32456");
+/// 在指定端口启动 HTTP 服务（127.0.0.1）。
+/// 公开端口受 http/enabled 控制；内部管理端口常开供 Manager 使用。
+pub fn serve(tx: Sender<PendingCommand>, port: u16) {
+    let Ok(listener) = TcpListener::bind((neurolings_common::api::HTTP_HOST, port)) else {
+        crate::log::warn("http", &format!("failed to bind 127.0.0.1:{port}"));
         return;
     };
+    crate::log::info("http", &format!("listening on 127.0.0.1:{port}"));
     for stream in listener.incoming().flatten() {
         let tx = tx.clone();
         std::thread::spawn(move || handle_connection(stream, tx));
