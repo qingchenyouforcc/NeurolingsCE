@@ -608,11 +608,11 @@ fn save_last_combination(state: &mut RunState) {
 }
 
 /// 切换管理器窗口可见性：已运行则切换显隐，未运行则拉起（对齐原版托盘语义）。
+#[cfg(any(windows, target_os = "macos"))]
 fn toggle_manager(state: &mut RunState) {
     if neurolings_platform::manager_window::is_running() {
         neurolings_platform::manager_window::toggle();
         let names = state.templates.names_sorted();
-        #[cfg(any(windows, target_os = "macos"))]
         crate::tray::refresh(&names);
     } else {
         crate::services::launch_manager();

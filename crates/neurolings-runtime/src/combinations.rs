@@ -267,6 +267,7 @@ impl CombinationStore {
     /// 迁移合并：把原版 QSettings 中的组合数据并入当前存储。
     /// saved 为原版 combinations/saved 的 JSON 数组，last 为 lastBeforeClose 的 JSON 对象；
     /// 按 id 去重追加，已有数据不会被覆盖。
+    #[cfg(any(windows, test))]
     pub fn merge_from_ce(&self, saved: &serde_json::Value, last: &serde_json::Value) {
         let mut combinations = self.load();
         if let Some(entries) = saved.as_array() {
@@ -323,10 +324,12 @@ impl CombinationStore {
 }
 
 /// 解析原版 combination 对象中的 mascots 数组；缺失或为空返回空表。
+#[cfg(any(windows, test))]
 fn parse_ce_mascots(body: &serde_json::Value) -> Vec<CombinationMember> {
     parse_ce_mascots_opt(body).unwrap_or_default()
 }
 
+#[cfg(any(windows, test))]
 fn parse_ce_mascots_opt(body: &serde_json::Value) -> Option<Vec<CombinationMember>> {
     let arr = body.get("mascots")?.as_array()?;
     let out = arr

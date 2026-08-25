@@ -177,18 +177,22 @@ fn main() -> ExitCode {
     };
 
     // HTTP 由设置项 http/enabled 控制（默认关闭）；托盘菜单语言同源读取。
-    let (enable_http, locale) = if headless {
-        (false, settings::Locale::En)
+    let runtime_settings = if headless {
+        None
     } else {
         let app_data_dir = neurolings_pack::storage::default_storage_path()
             .and_then(|p| p.parent().map(PathBuf::from))
             .unwrap_or_default();
-        let settings = Settings::load(&app_data_dir);
-        (
-            settings.get_bool(settings::KEY_HTTP_ENABLED, false),
-            settings.locale(),
-        )
+        Some(Settings::load(&app_data_dir))
     };
+    let enable_http = runtime_settings
+        .as_ref()
+        .is_some_and(|settings| settings.get_bool(settings::KEY_HTTP_ENABLED, false));
+
+    #[cfg(any(windows, target_os = "macos"))]
+    let locale = runtime_settings
+        .as_ref()
+        .map_or(settings::Locale::En, Settings::locale);
 
     #[cfg(any(windows, target_os = "macos"))]
     if !headless {

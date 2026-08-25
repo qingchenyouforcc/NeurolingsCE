@@ -765,7 +765,7 @@ fn normalize_macos_manager_heartbeat_rect(rect: Rect, reference_screen: Option<R
 fn normalize_manager_heartbeat_rect(rect: Rect, reference_screen: Option<Rect>) -> Rect {
     #[cfg(target_os = "macos")]
     {
-        return normalize_macos_manager_heartbeat_rect(rect, reference_screen);
+        normalize_macos_manager_heartbeat_rect(rect, reference_screen)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2830,9 +2830,9 @@ fn set_settings_command(view: &mut RuntimeView, request: &Value) -> Value {
         Ok(()) => {
             // 语言变化时同步托盘菜单文案（右键菜单下次构建即生效）。
             if key == crate::settings::KEY_LANGUAGE {
-                let locale = view.settings.locale();
                 #[cfg(any(windows, target_os = "macos"))]
                 {
+                    let locale = view.settings.locale();
                     crate::tray::set_locale(locale);
                     crate::tray::refresh(&view.templates.names_sorted());
                 }

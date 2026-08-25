@@ -9,6 +9,7 @@
 
 use std::path::Path;
 
+#[cfg(windows)]
 use crate::combinations::CombinationStore;
 use crate::settings::{self, Settings};
 
