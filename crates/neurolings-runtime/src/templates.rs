@@ -2,19 +2,26 @@
 //! 并维护运行期模板注册表（导入/移除/重载）。
 //! 默认桌宠是从内嵌资源构建的虚拟模板（名为 @，不落盘、不可删除）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use neurolings_engine::mascot::Template;
+use neurolings_engine::mascot::{Factory, Template};
 use neurolings_pack::metadata::MascotMetadata;
 
 /// 内置默认桌宠资源（虚拟模板 @ 的内容来源）。
 pub static DEFAULT_MASCOT: include_dir::Dir =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../assets/DefaultMascot");
 
-/// 默认模板名（与原版内嵌虚拟模板一致，不可作为文件系统目录名）。
-pub const DEFAULT_TEMPLATE_NAME: &str = "@";
+/// 默认模板的对外名称（info.json / CLI / 列表统一显示为 Default）。
+pub const DEFAULT_TEMPLATE_NAME: &str = "Default";
+/// 内嵌资源路径别名；召唤与 Codex 仍接受 `@`。
+pub const DEFAULT_TEMPLATE_ALIAS: &str = "@";
+
+/// 是否为内置默认模板（显示名 Default 或路径别名 @）。
+pub fn is_default_template(name: &str) -> bool {
+    name == DEFAULT_TEMPLATE_NAME || name == DEFAULT_TEMPLATE_ALIAS || name == "Default Mascot"
+}
 
 /// 一个已加载模板的完整信息。
 pub struct LoadedTemplate {
@@ -64,9 +71,24 @@ impl TemplateStore {
         }
     }
 
+    /// 把 `@` / `Default` / `Default Mascot` 解析成库里实际登记的名字。
+    pub fn resolve<'a>(&'a self, name: &str) -> Option<&'a str> {
+        if let Some(found) = self.names.iter().find(|n| n.as_str() == name) {
+            return Some(found.as_str());
+        }
+        if is_default_template(name) {
+            return self
+                .names
+                .iter()
+                .find(|n| is_default_template(n))
+                .map(|n| n.as_str());
+        }
+        None
+    }
+
     /// 注销模板（虚拟模板不可注销）。
     pub fn deregister(&mut self, name: &str) -> bool {
-        if name == DEFAULT_TEMPLATE_NAME {
+        if is_default_template(name) {
             return false;
         }
         self.names.retain(|n| n != name);
@@ -75,10 +97,10 @@ impl TemplateStore {
         true
     }
 
-    /// 按名称升序排列的模板名列表。
+    /// 按名称升序排列的模板名列表（大小写不敏感）。
     pub fn names_sorted(&self) -> Vec<String> {
         let mut names = self.names.clone();
-        names.sort();
+        names.sort_by_key(|n| n.to_lowercase());
         names
     }
 
@@ -99,6 +121,30 @@ fn load_dir(dir: &Path) -> Option<LoadedTemplate> {
     let actions_path = dir.join("actions.xml");
     let behaviors_path = dir.join("behaviors.xml");
     if !actions_path.is_file() || !behaviors_path.is_file() {
+        return None;
+    }
+    // 对齐 C++ MascotData：img 目录存在且至少含一张 PNG（大小写不敏感），
+    // 否则模板无效、不进库。
+    let has_png = fs::read_dir(dir.join("img"))
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                let path = entry.path();
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+            })
+        })
+        .unwrap_or(false);
+    if !has_png {
+        crate::log::warn(
+            "mascot",
+            &format!(
+                "skipping template {}: no PNG images in img directory",
+                dir.display()
+            ),
+        );
         return None;
     }
     let actions_xml = fs::read_to_string(&actions_path).ok()?;
@@ -124,7 +170,7 @@ fn load_dir(dir: &Path) -> Option<LoadedTemplate> {
     })
 }
 
-/// 从内嵌资源构建默认虚拟模板（名为 @，不落盘、不可删除）。
+/// 从内嵌资源构建默认虚拟模板（显示名 Default，不落盘、不可删除）。
 pub fn load_default_virtual() -> Option<LoadedTemplate> {
     let read = |path: &str| -> Option<String> {
         DEFAULT_MASCOT
@@ -136,8 +182,13 @@ pub fn load_default_virtual() -> Option<LoadedTemplate> {
     let metadata: MascotMetadata = read("info.json")
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
+    let name = if metadata.name.trim().is_empty() {
+        DEFAULT_TEMPLATE_NAME.to_string()
+    } else {
+        metadata.name.clone()
+    };
     Some(LoadedTemplate {
-        name: DEFAULT_TEMPLATE_NAME.to_string(),
+        name,
         dir: PathBuf::new(),
         actions_xml,
         behaviors_xml,
@@ -164,8 +215,27 @@ pub fn load_from_dir(root: &Path) -> Vec<LoadedTemplate> {
     out
 }
 
+fn is_mascot_package_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mascot"))
+}
+
+fn cache_is_stale(package: &Path, cache_dir: &Path) -> bool {
+    let xml = cache_dir.join("actions.xml");
+    if !xml.is_file() {
+        return true;
+    }
+    let package_time = fs::metadata(package).and_then(|m| m.modified()).ok();
+    let cache_time = fs::metadata(xml).and_then(|m| m.modified()).ok();
+    match (package_time, cache_time) {
+        (Some(package_time), Some(cache_time)) => package_time > cache_time,
+        _ => false,
+    }
+}
+
 /// 从运行时存储目录加载：解压的桌宠子目录与 .mascot 包文件
-/// （包文件解压到缓存目录）。
+/// （包文件解压到缓存目录；包比缓存新时重新解压）。
 pub fn load_from_storage(storage: &Path, cache: &Path) -> Vec<LoadedTemplate> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(storage) else {
@@ -174,16 +244,21 @@ pub fn load_from_storage(storage: &Path, cache: &Path) -> Vec<LoadedTemplate> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "log") {
+                continue;
+            }
             if let Some(template) = load_dir(&path) {
                 out.push(template);
             }
-        } else if path.extension().is_some_and(|e| e == "mascot") {
+        } else if is_mascot_package_file(&path) {
             let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
             let Some(stem) = stem else { continue };
             let target = cache.join(&stem);
-            if !target.join("actions.xml").is_file() {
+            if cache_is_stale(&path, &target) {
+                let _ = fs::remove_dir_all(&target);
                 let _ = fs::create_dir_all(&target);
                 if neurolings_pack::package::extract_package(&path, &target).is_err() {
+                    let _ = fs::remove_dir_all(&target);
                     continue;
                 }
             }
@@ -194,6 +269,47 @@ pub fn load_from_storage(storage: &Path, cache: &Path) -> Vec<LoadedTemplate> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// 把已在后台读取的模板快照同步进注册表与引擎工厂。
+///
+/// 此函数只更新内存状态，不执行磁盘 I/O，适合由运行时主循环提交后台结果。
+pub fn apply_loaded_templates(
+    store: &mut TemplateStore,
+    factory: &mut Factory,
+    on_disk: &[LoadedTemplate],
+) -> Vec<String> {
+    let disk_names: HashSet<String> = on_disk
+        .iter()
+        .map(|template| template.name.clone())
+        .filter(|name| !is_default_template(name))
+        .collect();
+
+    let stale: Vec<String> = store
+        .names_sorted()
+        .into_iter()
+        .filter(|name| !is_default_template(name) && !disk_names.contains(name))
+        .collect();
+    for name in &stale {
+        store.deregister(name);
+        let _ = factory.deregister_template(name);
+    }
+
+    for template in on_disk {
+        if is_default_template(&template.name) || template.virtual_ {
+            continue;
+        }
+        store.deregister(&template.name);
+        let _ = factory.deregister_template(&template.name);
+        store.register(template);
+        if let Err(err) = factory.register_template(template.engine_template()) {
+            crate::log::warn(
+                "mascot",
+                &format!("failed to register template {}: {err}", template.name),
+            );
+        }
+    }
+    store.names_sorted()
 }
 
 /// 初始化存储目录：写入警示 README（不覆盖已有文件），
@@ -230,5 +346,90 @@ fn cleanup_legacy_default(storage: &Path) {
         });
     if matches_embedded {
         let _ = fs::remove_dir_all(&legacy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 在临时目录构造一个散开包：actions/behaviors 必有，img 按需。
+    fn write_pack(root: &Path, name: &str, img_files: Option<&[&str]>) -> PathBuf {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("actions.xml"), "<actions/>").unwrap();
+        fs::write(dir.join("behaviors.xml"), "<behaviors/>").unwrap();
+        if let Some(files) = img_files {
+            let img = dir.join("img");
+            fs::create_dir_all(&img).unwrap();
+            for file in files {
+                fs::write(img.join(file), b"png").unwrap();
+            }
+        }
+        dir
+    }
+
+    /// 无 img 目录的包不是有效模板（对齐 C++ MascotData）。
+    #[test]
+    fn load_from_dir_skips_pack_without_img() {
+        let dir = tempfile::tempdir().unwrap();
+        write_pack(dir.path(), "NoImg", None);
+        assert!(load_from_dir(dir.path()).is_empty());
+    }
+
+    /// img 目录存在但没有任何 PNG：同样无效。
+    #[test]
+    fn load_from_dir_skips_pack_without_png() {
+        let dir = tempfile::tempdir().unwrap();
+        write_pack(dir.path(), "NoPng", Some(&["a.gif"]));
+        assert!(load_from_dir(dir.path()).is_empty());
+    }
+
+    /// img 至少一张 PNG（后缀大小写不敏感）：正常加载。
+    #[test]
+    fn load_from_dir_accepts_pack_with_png_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        write_pack(dir.path(), "WithPng", Some(&["A.PNG"]));
+        let loaded = load_from_dir(dir.path());
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "WithPng");
+    }
+
+    #[test]
+    fn load_from_storage_reads_mascot_package() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mascot_pack/Cerber.mascot");
+        assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().join("mascots");
+        let cache = dir.path().join("mascot-cache");
+        fs::create_dir_all(&storage).unwrap();
+        fs::copy(&fixture, storage.join("Cerber.mascot")).unwrap();
+        let loaded = load_from_storage(&storage, &cache);
+        assert!(
+            loaded.iter().any(|t| t.name == "Cerber"),
+            "loaded names: {:?}",
+            loaded.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sync_picks_up_newly_copied_package() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mascot_pack/Cerber.mascot");
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().join("mascots");
+        let cache = dir.path().join("mascot-cache");
+        fs::create_dir_all(&storage).unwrap();
+        let mut store = TemplateStore::new();
+        let mut factory = Factory::new(None);
+        let empty_snapshot = load_from_storage(&storage, &cache);
+        let empty = apply_loaded_templates(&mut store, &mut factory, &empty_snapshot);
+        assert!(!empty.iter().any(|n| n == "Cerber"));
+        fs::copy(&fixture, storage.join("Cerber.mascot")).unwrap();
+        let snapshot = load_from_storage(&storage, &cache);
+        let names = apply_loaded_templates(&mut store, &mut factory, &snapshot);
+        assert!(names.iter().any(|n| n == "Cerber"), "names={names:?}");
+        assert!(factory.get_template("Cerber").is_some());
     }
 }

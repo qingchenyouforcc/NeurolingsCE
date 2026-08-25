@@ -282,13 +282,13 @@ fn fail(
     }
 }
 
-fn parse_int_value(value: &str) -> Option<i64> {
-    value.parse::<i64>().ok()
+fn parse_int_value(value: &str) -> Option<i32> {
+    value.parse::<i32>().ok()
 }
 
 fn parse_optional_label(value: &str) -> Option<i64> {
     match parse_int_value(value) {
-        Some(label) if label >= 0 => Some(label),
+        Some(label) if label >= 0 => Some(i64::from(label)),
         _ => None,
     }
 }
@@ -472,7 +472,17 @@ fn parse_document_command(
         let parsed: Result<serde_json::Value, _> =
             serde_json::from_str(&command.codex_notify_payload);
         match parsed {
-            Ok(serde_json::Value::Object(_)) => {}
+            Ok(value @ serde_json::Value::Object(_)) => {
+                if let Err(error) = neurolings_common::codex::parse_activity(&value) {
+                    return fail(
+                        &command.global,
+                        &format!("Invalid Codex notification: {error}"),
+                        argv0,
+                        command_token,
+                        "",
+                    );
+                }
+            }
             Ok(_) => {
                 return fail(
                     &command.global,
@@ -707,7 +717,7 @@ fn parse_document_summon_command(
             }
             let value = args.take();
             match parse_int_value(&value) {
-                Some(data_id) => command.spawn_request.data_id = Some(data_id),
+                Some(data_id) => command.spawn_request.data_id = Some(i64::from(data_id)),
                 None => {
                     return fail(
                         &command.global,
@@ -818,7 +828,7 @@ fn parse_legacy_command(
                 if token == "--data-id" {
                     let value = take_value!();
                     match parse_int_value(&value) {
-                        Some(data_id) => command.spawn_request.data_id = Some(data_id),
+                        Some(data_id) => command.spawn_request.data_id = Some(i64::from(data_id)),
                         None => {
                             return fail(
                                 &command.global,

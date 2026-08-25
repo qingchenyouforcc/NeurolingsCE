@@ -22,6 +22,10 @@ const MAX_PLAN_STEPS: usize = 32;
 const MAX_TEXT_STEP: usize = 2048;
 const MAX_FINAL_TEXT: usize = 4096;
 const MAX_AGENT_MESSAGE: usize = 131072;
+const MAX_PLAN_DELTA_ENTRIES: usize = 64;
+const MAX_PLAN_DELTA_BYTES: usize = 16 * 1024;
+const MAX_PLAN_DELTA_TOTAL_BYTES: usize = MAX_AGENT_MESSAGE;
+const MAX_PLAN_DELTA_KEY_CHARS: usize = 256;
 
 /// 连接状态（对齐原版 CodexAppServerConnectionState）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +128,7 @@ pub struct AppServerClient {
     next_request_id: u64,
     sequence: u64,
     plan_deltas: HashMap<String, String>,
+    plan_delta_order: VecDeque<String>,
     file_changes_by_item: VecDeque<String>,
     stopping: bool,
     generation_counter: Arc<AtomicU64>,
@@ -131,6 +136,18 @@ pub struct AppServerClient {
 
 fn clamp_str(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
+}
+
+/// 保留末尾完整字符，避免截断多字节 UTF-8 字符。
+fn retain_tail_bytes(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut start = value.len() - max_bytes;
+    while !value.is_char_boundary(start) {
+        start += 1;
+    }
+    *value = value[start..].to_string();
 }
 
 /// 从 params（或 params.item）取字符串。
@@ -141,6 +158,16 @@ fn item_field(params: &Value, key: &str) -> String {
         }
     }
     String::new()
+}
+
+/// 限制缓存索引字段长度，避免异常标识放大计划缓存元数据。
+fn plan_delta_key(params: &Value) -> String {
+    format!(
+        "{}\x1f{}\x1f{}",
+        clamp_str(&item_field(params, "threadId"), MAX_PLAN_DELTA_KEY_CHARS),
+        clamp_str(&item_field(params, "turnId"), MAX_PLAN_DELTA_KEY_CHARS),
+        clamp_str(&item_field(params, "itemId"), MAX_PLAN_DELTA_KEY_CHARS),
+    )
 }
 
 impl AppServerClient {
@@ -250,6 +277,7 @@ impl AppServerClient {
             next_request_id: 1,
             sequence: 0,
             plan_deltas: HashMap::new(),
+            plan_delta_order: VecDeque::new(),
             file_changes_by_item: VecDeque::new(),
             stopping: false,
             generation_counter: counter.clone(),
@@ -349,6 +377,77 @@ impl AppServerClient {
         }));
     }
 
+    /// 清空未完成轮次的计划增量，避免内容跨轮次累积。
+    fn clear_plan_deltas(&mut self) {
+        self.plan_deltas.clear();
+        self.plan_delta_order.clear();
+    }
+
+    fn remove_plan_delta(&mut self, key: &str) {
+        self.plan_deltas.remove(key);
+        if let Some(position) = self.plan_delta_order.iter().position(|entry| entry == key) {
+            self.plan_delta_order.remove(position);
+        }
+    }
+
+    fn plan_deltas_total_bytes(&self) -> usize {
+        self.plan_deltas
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+            + self.plan_delta_order.iter().map(String::len).sum::<usize>()
+    }
+
+    fn touch_plan_delta(&mut self, key: &str) {
+        if let Some(position) = self.plan_delta_order.iter().position(|entry| entry == key) {
+            self.plan_delta_order.remove(position);
+        }
+        self.plan_delta_order.push_back(key.to_string());
+    }
+
+    fn evict_oldest_plan_delta(&mut self) -> bool {
+        while let Some(key) = self.plan_delta_order.pop_front() {
+            if self.plan_deltas.remove(&key).is_some() {
+                return true;
+            }
+        }
+        if let Some(key) = self.plan_deltas.keys().next().cloned() {
+            self.plan_deltas.remove(&key);
+            return true;
+        }
+        false
+    }
+
+    /// 以最近更新顺序保存计划增量，使任一缓存预算触顶时优先淘汰较早内容。
+    fn append_plan_delta(&mut self, key: String, delta: &str) {
+        if !self.plan_deltas.contains_key(&key) {
+            while self.plan_deltas.len() >= MAX_PLAN_DELTA_ENTRIES {
+                if !self.evict_oldest_plan_delta() {
+                    break;
+                }
+            }
+            self.plan_deltas.insert(key.clone(), String::new());
+        }
+        if let Some(entry) = self.plan_deltas.get_mut(&key) {
+            entry.push_str(delta);
+            retain_tail_bytes(entry, MAX_PLAN_DELTA_BYTES);
+        }
+        self.touch_plan_delta(&key);
+        while self.plan_deltas_total_bytes() > MAX_PLAN_DELTA_TOTAL_BYTES {
+            if !self.evict_oldest_plan_delta() {
+                break;
+            }
+        }
+    }
+
+    fn joined_plan_deltas(&self) -> String {
+        self.plan_delta_order
+            .iter()
+            .filter_map(|key| self.plan_deltas.get(key))
+            .map(String::as_str)
+            .collect()
+    }
+
     fn fail_closed(shared: &Arc<Mutex<AppServerShared>>, reason: &str, client: &Arc<Mutex<Self>>) {
         // 对齐原版：cancel pending → Blocked → terminate。
         client.lock().unwrap().cancel_pending_requests();
@@ -357,6 +456,7 @@ impl AppServerClient {
         s.diagnostic = reason.to_string();
         drop(s);
         let mut guard = client.lock().unwrap();
+        guard.clear_plan_deltas();
         if let Some(child) = guard.child.as_mut() {
             let _ = child.kill();
         }
@@ -405,6 +505,7 @@ impl AppServerClient {
         }
         self.child = None;
         self.stdin = None;
+        self.clear_plan_deltas();
         let mut s = self.shared.lock().unwrap();
         s.state = ConnectionState::Stopped;
         s.approvals.clear();
@@ -453,7 +554,9 @@ impl AppServerClient {
         let mut s = self.shared.lock().unwrap();
         s.thread_id.clear();
         s.turn_id.clear();
+        drop(s);
         self.pending.clear();
+        self.clear_plan_deltas();
     }
 
     pub fn start_turn(&mut self, text: &str, plan: bool) {
@@ -488,6 +591,7 @@ impl AppServerClient {
                     json!({ "mode": mode, "settings": { "developer_instructions": null } });
             }
         }
+        self.clear_plan_deltas();
         self.shared.lock().unwrap().state = ConnectionState::Running;
         self.send_request("turn/start", params, "turnStart");
     }
@@ -660,9 +764,12 @@ fn handle_message(
         Some(Value::String(s)) => format!("s:{s}"),
         _ => return,
     };
-    let mut guard = client.lock().unwrap();
-    let Some(kind) = guard.pending.remove(&id_key) else {
-        return;
+    let kind = {
+        let mut guard = client.lock().unwrap();
+        let Some(kind) = guard.pending.remove(&id_key) else {
+            return;
+        };
+        kind
     };
     if let Some(error) = message.get("error") {
         let reason = error
@@ -807,6 +914,7 @@ fn handle_server_request(
             if s.approvals.len() >= MAX_PENDING_APPROVALS {
                 drop(s);
                 guard.send_result(&id, json!({ "decision": "cancel" }));
+                drop(guard);
                 AppServerClient::fail_closed(shared, "too many pending approvals", client);
                 return;
             }
@@ -864,6 +972,7 @@ fn handle_notification(
     let mut s = shared.lock().unwrap();
     match method {
         "thread/started" => {
+            guard.clear_plan_deltas();
             let thread = params.get("thread").cloned().unwrap_or(params.clone());
             if let Some(id) = thread
                 .get("id")
@@ -913,24 +1022,14 @@ fn handle_notification(
             s.plan.explanation = snapshot.explanation;
         }
         "item/plan/delta" => {
-            let key = format!(
-                "{}\x1f{}\x1f{}",
-                item_field(params, "threadId"),
-                item_field(params, "turnId"),
-                item_field(params, "itemId"),
-            );
+            let key = plan_delta_key(params);
             let delta = params
                 .get("delta")
                 .or_else(|| params.get("text"))
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let entry = guard.plan_deltas.entry(key).or_default();
-            entry.push_str(delta);
-            let joined: String = guard
-                .plan_deltas
-                .values()
-                .map(|v| clamp_str(v, MAX_AGENT_MESSAGE))
-                .collect();
+            guard.append_plan_delta(key, delta);
+            let joined = guard.joined_plan_deltas();
             s.plan.final_text = clamp_str(&joined, MAX_FINAL_TEXT * 16);
         }
         "item/agentMessage/delta" => {
@@ -940,23 +1039,15 @@ fn handle_notification(
                 .and_then(Value::as_str)
                 .unwrap_or("");
             s.final_message.push_str(delta);
-            if s.final_message.len() > MAX_AGENT_MESSAGE {
-                let cut = s.final_message.len() - MAX_AGENT_MESSAGE;
-                s.final_message = s.final_message[cut..].to_string();
-            }
+            retain_tail_bytes(&mut s.final_message, MAX_AGENT_MESSAGE);
         }
         "item/completed" => {
             let item = params.get("item").cloned().unwrap_or(params.clone());
             let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
             if item_type == "plan" {
                 let snapshot = parse_plan_snapshot(params, true);
-                let key = format!(
-                    "{}\x1f{}\x1f{}",
-                    item_field(params, "threadId"),
-                    item_field(params, "turnId"),
-                    item_field(params, "itemId"),
-                );
-                guard.plan_deltas.remove(&key);
+                let key = plan_delta_key(params);
+                guard.remove_plan_delta(&key);
                 s.plan = snapshot;
             } else if item_type == "agentMessage" {
                 let phase = item.get("phase").and_then(Value::as_str).unwrap_or("");
@@ -965,6 +1056,7 @@ fn handle_notification(
                     && !text.is_empty()
                 {
                     s.final_message = text.to_string();
+                    retain_tail_bytes(&mut s.final_message, MAX_AGENT_MESSAGE);
                 }
             }
         }
@@ -982,6 +1074,7 @@ fn handle_notification(
             }
         }
         "turn/completed" => {
+            guard.clear_plan_deltas();
             let status = params
                 .get("status")
                 .or_else(|| params.get("turn").and_then(|t| t.get("status")))
@@ -996,6 +1089,7 @@ fn handle_notification(
             };
         }
         "thread/closed" => {
+            guard.clear_plan_deltas();
             s.approvals.clear();
             s.user_inputs.clear();
             s.thread_id.clear();
@@ -1241,6 +1335,7 @@ fn check_config_allowed(result: &Value) -> bool {
 
 /// 全局单例（对齐原版"GUI 拥有一个客户端"）。
 static APP_SERVER: Mutex<Option<Arc<Mutex<AppServerClient>>>> = Mutex::new(None);
+static APP_SERVER_LIFECYCLE: Mutex<()> = Mutex::new(());
 static APP_SERVER_SHARED: OnceLock<Arc<Mutex<AppServerShared>>> = OnceLock::new();
 
 pub fn shared_state() -> &'static Arc<Mutex<AppServerShared>> {
@@ -1263,24 +1358,30 @@ pub fn shared_state() -> &'static Arc<Mutex<AppServerShared>> {
     })
 }
 
+/// 连接新的 Codex app-server；已有实例会先完整停止。
 pub fn connect(executable: &str) -> Result<(), String> {
-    let mut slot = APP_SERVER.lock().unwrap();
-    if let Some(existing) = slot.as_ref()
-        && let Ok(mut guard) = existing.try_lock()
-    {
-        guard.stop();
+    let _lifecycle = APP_SERVER_LIFECYCLE.lock().unwrap();
+    let existing = APP_SERVER.lock().unwrap().take();
+    if let Some(existing) = existing {
+        stop_client(existing);
     }
     let client = AppServerClient::start(shared_state().clone(), executable)?;
-    *slot = Some(client);
+    *APP_SERVER.lock().unwrap() = Some(client);
     Ok(())
 }
 
+/// 停止当前 Codex app-server，并等待其子进程退出。
 pub fn disconnect() {
-    let mut slot = APP_SERVER.lock().unwrap();
-    if let Some(existing) = slot.take()
-        && let Ok(mut guard) = existing.try_lock()
-    {
-        guard.stop();
+    let _lifecycle = APP_SERVER_LIFECYCLE.lock().unwrap();
+    if let Some(existing) = APP_SERVER.lock().unwrap().take() {
+        stop_client(existing);
+    }
+}
+
+fn stop_client(client: Arc<Mutex<AppServerClient>>) {
+    match client.lock() {
+        Ok(mut guard) => guard.stop(),
+        Err(poisoned) => poisoned.into_inner().stop(),
     }
 }
 
@@ -1294,6 +1395,268 @@ pub fn with_client<T>(f: impl FnOnce(&mut AppServerClient) -> T) -> Option<T> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn idle_test_client() -> (Arc<Mutex<AppServerClient>>, Arc<Mutex<AppServerShared>>) {
+        let shared = Arc::new(Mutex::new(AppServerShared {
+            state: ConnectionState::Ready,
+            diagnostic: String::new(),
+            thread_id: String::new(),
+            turn_id: String::new(),
+            workspace: String::new(),
+            plan: PlanSnapshot::default(),
+            final_message: String::new(),
+            approvals: Vec::new(),
+            user_inputs: Vec::new(),
+            available_modes: Vec::new(),
+            plan_supported: false,
+            config_allowed: true,
+            generation: 1,
+        }));
+        let client = Arc::new(Mutex::new(AppServerClient {
+            shared: shared.clone(),
+            child: None,
+            stdin: None,
+            pending: HashMap::new(),
+            next_request_id: 1,
+            sequence: 0,
+            plan_deltas: HashMap::new(),
+            plan_delta_order: VecDeque::new(),
+            file_changes_by_item: VecDeque::new(),
+            stopping: false,
+            generation_counter: Arc::new(AtomicU64::new(1)),
+        }));
+        (client, shared)
+    }
+
+    fn assert_handle_message_completes(kind: &'static str, message: Value) {
+        let (client, shared) = idle_test_client();
+        client.lock().unwrap().pending.insert("n:1".into(), kind);
+        let worker_client = client.clone();
+        let worker_shared = shared.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            handle_message(&worker_shared, &worker_client, message);
+            done_tx.send(()).unwrap();
+        });
+
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(shared.lock().unwrap().state, ConnectionState::Blocked);
+    }
+
+    #[test]
+    fn stop_client_waits_for_a_contended_lock() {
+        let (client, shared) = idle_test_client();
+        let held_client = client.clone();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = held_client.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        locked_rx.recv().unwrap();
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let stopper = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            stop_client(client);
+            done_tx.send(()).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err()
+        );
+
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        stopper.join().unwrap();
+        assert_eq!(shared.lock().unwrap().state, ConnectionState::Stopped);
+    }
+
+    #[test]
+    fn response_fail_closed_releases_client_lock() {
+        assert_handle_message_completes(
+            "initialize",
+            json!({ "id": 1, "error": { "message": "failed" } }),
+        );
+        assert_handle_message_completes("threadStart", json!({ "id": 1, "result": {} }));
+    }
+
+    #[test]
+    fn approval_limit_fail_closed_releases_client_lock() {
+        let (client, shared) = idle_test_client();
+        {
+            let mut s = shared.lock().unwrap();
+            s.state = ConnectionState::Running;
+            s.approvals = (0..MAX_PENDING_APPROVALS)
+                .map(|sequence| Approval {
+                    id: format!("pending-{sequence}"),
+                    ..Default::default()
+                })
+                .collect();
+        }
+        let worker_client = client.clone();
+        let worker_shared = shared.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            handle_server_request(
+                &worker_shared,
+                &worker_client,
+                "item/commandExecution/requestApproval",
+                &json!({
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "itemId": "item",
+                    "command": "echo test",
+                }),
+                json!(99),
+            );
+            done_tx.send(()).unwrap();
+        });
+
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(shared.lock().unwrap().state, ConnectionState::Blocked);
+    }
+
+    #[test]
+    fn agent_message_delta_trims_on_utf8_boundary() {
+        let (client, shared) = idle_test_client();
+        let delta = format!("你{}", "a".repeat(MAX_AGENT_MESSAGE - 2));
+        handle_notification(
+            &shared,
+            &client,
+            "item/agentMessage/delta",
+            &json!({ "delta": delta }),
+        );
+
+        let message = shared.lock().unwrap().final_message.clone();
+        assert!(message.len() <= MAX_AGENT_MESSAGE);
+        assert_eq!(message, "a".repeat(MAX_AGENT_MESSAGE - 2));
+    }
+
+    #[test]
+    fn plan_delta_cache_enforces_limits_and_clears() {
+        let (client, shared) = idle_test_client();
+        for index in 0..=MAX_PLAN_DELTA_ENTRIES {
+            handle_notification(
+                &shared,
+                &client,
+                "item/plan/delta",
+                &json!({
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "itemId": format!("entry-{index}"),
+                    "delta": "x",
+                }),
+            );
+        }
+        let oversized_item_id = "你".repeat(MAX_PLAN_DELTA_KEY_CHARS + 1);
+        handle_notification(
+            &shared,
+            &client,
+            "item/plan/delta",
+            &json!({
+                "threadId": "thread",
+                "turnId": "turn",
+                "itemId": oversized_item_id,
+                "delta": "x",
+            }),
+        );
+        let oversized_delta = "x".repeat(MAX_PLAN_DELTA_BYTES + 1);
+        handle_notification(
+            &shared,
+            &client,
+            "item/plan/delta",
+            &json!({
+                "threadId": "thread",
+                "turnId": "turn",
+                "itemId": "oversized",
+                "delta": oversized_delta,
+            }),
+        );
+        for index in 0..=(MAX_PLAN_DELTA_TOTAL_BYTES / MAX_PLAN_DELTA_BYTES + 1) {
+            handle_notification(
+                &shared,
+                &client,
+                "item/plan/delta",
+                &json!({
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "itemId": format!("total-{index}"),
+                    "delta": "x".repeat(MAX_PLAN_DELTA_BYTES),
+                }),
+            );
+        }
+        {
+            let guard = client.lock().unwrap();
+            assert!(guard.plan_deltas.len() <= MAX_PLAN_DELTA_ENTRIES);
+            assert_eq!(guard.plan_deltas.len(), guard.plan_delta_order.len());
+            assert!(
+                guard
+                    .plan_deltas
+                    .keys()
+                    .all(|key| key.len() <= MAX_PLAN_DELTA_KEY_CHARS * 12 + 2)
+            );
+            assert!(
+                guard
+                    .plan_deltas
+                    .values()
+                    .all(|entry| entry.len() <= MAX_PLAN_DELTA_BYTES)
+            );
+            assert!(guard.plan_deltas_total_bytes() <= MAX_PLAN_DELTA_TOTAL_BYTES);
+        }
+
+        handle_notification(
+            &shared,
+            &client,
+            "turn/completed",
+            &json!({ "status": "completed" }),
+        );
+        {
+            let guard = client.lock().unwrap();
+            assert!(guard.plan_deltas.is_empty());
+            assert!(guard.plan_delta_order.is_empty());
+        }
+        handle_notification(
+            &shared,
+            &client,
+            "item/plan/delta",
+            &json!({
+                "threadId": "thread",
+                "turnId": "turn",
+                "itemId": "thread-close",
+                "delta": "x",
+            }),
+        );
+        handle_notification(&shared, &client, "thread/closed", &json!({}));
+        assert!(client.lock().unwrap().plan_deltas.is_empty());
+
+        handle_notification(
+            &shared,
+            &client,
+            "item/plan/delta",
+            &json!({
+                "threadId": "thread",
+                "turnId": "turn",
+                "itemId": "disconnect",
+                "delta": "x",
+            }),
+        );
+        client.lock().unwrap().stop();
+        assert!(client.lock().unwrap().plan_deltas.is_empty());
+    }
 
     #[test]
     fn approval_parse_defaults_decisions_and_kinds() {

@@ -19,7 +19,7 @@ mod runtime;
 mod services;
 mod settings;
 mod templates;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod tray;
 mod update;
 
@@ -60,6 +60,7 @@ fn fake_screen() -> ScreenInfo {
             right: 1920,
             bottom: 1040,
         },
+        scale: 1.0,
     }
 }
 
@@ -149,8 +150,10 @@ fn main() -> ExitCode {
         templates::load_from_storage(&storage, &cache)
     };
 
-    // 默认模板为内嵌虚拟模板 @：不落盘、不可删除（对齐原版）。
+    // 默认模板为内嵌虚拟模板 Default：不落盘、不可删除。
+    // 磁盘上若还留着同名包，丢掉以免工厂重复登记导致启动失败。
     if let Some(default) = templates::load_default_virtual() {
+        loaded.retain(|t| !templates::is_default_template(&t.name));
         loaded.insert(0, default);
     }
 
@@ -187,7 +190,7 @@ fn main() -> ExitCode {
         )
     };
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if !headless {
         let names: Vec<String> = loaded.iter().map(|t| t.name.clone()).collect();
         tray::init(&names, locale);

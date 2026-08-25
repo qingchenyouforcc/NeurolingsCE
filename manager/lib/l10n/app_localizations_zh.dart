@@ -18,7 +18,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get navStore => '商店';
 
   @override
-  String get navCreate => '创建';
+  String get navCreate => '制作';
 
   @override
   String get navCombinations => '组合';
@@ -33,13 +33,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get navAbout => '关于';
 
   @override
-  String get closeConfirmTitle => '关闭 NeurolingsCE？';
+  String get closeConfirmTitle => '关闭 NeurolingsCE';
 
   @override
-  String get closeConfirmBody => '确定要关闭 NeurolingsCE 吗？所有桌宠都会被关闭。';
+  String get closeConfirmBody => '确定要关闭 NeurolingsCE 吗？';
 
   @override
-  String get closeKeepOpen => '保持运行';
+  String get closeKeepOpen => '保持打开';
 
   @override
   String get closeConfirmClose => '关闭';
@@ -63,7 +63,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get spawn => '召唤';
 
   @override
-  String get spawnRandom => '随机召唤';
+  String get spawnRandom => '随机生成';
 
   @override
   String get dismiss => '关闭';
@@ -81,13 +81,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get showFolder => '打开文件夹';
 
   @override
-  String get deleteSelected => '删除所选';
+  String get deleteSelected => '删除所选项';
 
   @override
-  String get noTemplates => '还没有导入的桌宠';
+  String get noTemplates => '尚未导入桌宠';
 
   @override
-  String get noTemplatesHint => '导入 .mascot 包或 Shimeji 压缩包即可开始。';
+  String get noTemplatesHint => '导入 .mascot 包或 Shimeji 压缩包即可开始使用。';
 
   @override
   String get importMascot => '导入桌宠...';
@@ -126,7 +126,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String get close => '关闭';
 
   @override
-  String get homeSelectTemplate => '选择一个桌宠查看详情。';
+  String get homeTitle => '桌宠管理器';
+
+  @override
+  String get homePageDescription => '浏览桌宠库、启动桌面伙伴并管理已安装的桌宠包。';
+
+  @override
+  String get homeSelectTemplate => '未选择桌宠';
+
+  @override
+  String statusBar(int mascots, int templates) {
+    return '  当前桌宠数量: $mascots  |  桌宠模板数: $templates';
+  }
+
+  @override
+  String inspectorTitle(Object name) {
+    return '检查器 — $name';
+  }
+
+  @override
+  String get inspectorClose => '关闭检查器';
+
+  @override
+  String get combinationsOfflineHint => '请确认运行时已启动。';
 
   @override
   String get homeImportDone => '导入完成';
@@ -470,6 +492,85 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get aboutThirdParty => '第三方';
+
+  @override
+  String get storeIndex => '商店索引';
+
+  @override
+  String get storeNotConfigured => '（未配置）';
+
+  @override
+  String get storeRuntimeOffline => '运行时离线';
+
+  @override
+  String get storeRuntimeOfflineHint => '请先在主页启动运行时，再浏览商店。';
+
+  @override
+  String get storeUnconfigured => '商店未配置';
+
+  @override
+  String get storeUnconfiguredHint =>
+      '设置环境变量 NEUROLINGSCE_MASCOT_INDEX_URL 指向商店索引，然后重启运行时。';
+
+  @override
+  String get storeLoadFailed => '加载索引失败';
+
+  @override
+  String get storeCacheWarning => '缓存警告';
+
+  @override
+  String get storeSearchHint => '搜索名称、简介、ID或作者...';
+
+  @override
+  String get storeAllTags => '全部标签';
+
+  @override
+  String get storeEmpty => '商店暂无桌宠包';
+
+  @override
+  String get storeNoMatch => '没有匹配的桌宠';
+
+  @override
+  String storeCount(int count) {
+    return '$count 个桌宠';
+  }
+
+  @override
+  String storeTag(Object tag) {
+    return '标签: $tag';
+  }
+
+  @override
+  String get storeFromCache => '来自缓存';
+
+  @override
+  String get storeDetails => '详情';
+
+  @override
+  String get storeInstall => '安装';
+
+  @override
+  String storeAuthors(Object names) {
+    return '作者: $names';
+  }
+
+  @override
+  String storeMinVersion(Object version) {
+    return '最低版本: $version';
+  }
+
+  @override
+  String storeInstallOk(Object name) {
+    return '安装成功：$name';
+  }
+
+  @override
+  String get storeInstallOkHint => '已通过 SHA-256 校验并导入模板库，可在主页召唤。';
+
+  @override
+  String storeInstallFailed(Object name) {
+    return '安装失败：$name';
+  }
 
   @override
   String get storeCommunity => '社区投稿';

@@ -22,7 +22,7 @@ use crate::combinations::CombinationStore;
 use crate::runtime::environment::EnvironmentSet;
 use crate::runtime::interaction::{GestureOutcome, MenuAction};
 use crate::runtime::session::{Session, TICK_INTERVAL_MS, create_session};
-use crate::services::{CommandChannel, RuntimeView};
+use crate::services::{BackgroundCommand, BackgroundJobs, CommandChannel, RuntimeView};
 use crate::settings::Settings;
 use crate::templates::TemplateStore;
 
@@ -90,6 +90,10 @@ struct RunState {
     codex_seen: VecDeque<(String, String, Instant)>,
     /// 点击 Codex 气泡后请求管理器跳转 Codex 页（心跳响应消费）。
     codex_page_requested: bool,
+    /// 右键「检查」后请求管理器打开检查器（心跳响应消费）。
+    inspect_requested: Option<u64>,
+    cli_runtime_mode: bool,
+    startup_mode: bool,
 }
 
 pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
@@ -123,11 +127,20 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
                 .unwrap_or_default()
         });
     let settings = Settings::load(&app_data_dir);
+    // 恢复上次下载完成的更新安装包信息，重启后仍可继续安装。
+    crate::update::restore_downloaded(&settings);
+    // 先建立每次运行独有的控制面令牌，再允许拉起 Manager 或监听内部端口。
+    // 初始化失败时宁可拒绝启动内部控制面，也不能退回可猜测凭据。
+    crate::services::initialize_internal_control_token()?;
+    let internal_control_token = crate::services::internal_control_token()
+        .ok_or_else(|| "internal control token is unavailable".to_string())?
+        .to_owned();
 
     let mut template_store = TemplateStore::new();
     let mut factory = Factory::new(None);
     for template in templates {
         template_store.register(&template);
+        let _ = factory.deregister_template(&template.name);
         factory
             .register_template(template.engine_template())
             .map_err(|e| e.to_string())?;
@@ -160,6 +173,7 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
     };
 
     let commands = CommandChannel::new();
+    let mut background_jobs = BackgroundJobs::new();
     let command_tx = commands.sender();
     let mut _ipc_thread = None;
     if let Some(server) = ipc_server {
@@ -172,14 +186,15 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
     if enable_http {
         let tx = command_tx.clone();
         _http_thread = Some(std::thread::spawn(move || {
-            crate::http::serve(tx, neurolings_common::api::HTTP_PORT);
+            crate::http::serve_public(tx, neurolings_common::api::HTTP_PORT);
         }));
     }
     // Manager 私有管理端口常开（双进程架构的内部通道，不受 http/enabled 影响）。
     if !headless {
         let tx = command_tx.clone();
+        let token = internal_control_token.clone();
         std::thread::spawn(move || {
-            crate::http::serve(tx, neurolings_common::api::INTERNAL_HTTP_PORT);
+            crate::http::serve_internal(tx, neurolings_common::api::INTERNAL_HTTP_PORT, token);
         });
     }
 
@@ -205,6 +220,9 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         manager_rect: None,
         codex_seen: VecDeque::new(),
         codex_page_requested: false,
+        inspect_requested: None,
+        cli_runtime_mode: opts.cli_runtime_mode,
+        startup_mode: opts.startup_mode,
     };
 
     startup_spawn(&mut state, &opts, &backend);
@@ -223,7 +241,7 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         // 低频同步托盘 Show/Hide 文案（管理器自行启动/退出时跟随）。
         if Instant::now() >= next_tray_sync {
             next_tray_sync += Duration::from_millis(500);
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             {
                 let names = state.templates.names_sorted();
                 crate::tray::sync_visibility(&names);
@@ -238,7 +256,7 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         for event in events {
             handle_event(&mut state, &backend, event);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         match crate::tray::poll() {
             crate::tray::TrayCommand::ToggleManager => {
                 toggle_manager(&mut state);
@@ -249,16 +267,68 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
             crate::tray::TrayCommand::CloseAll => {
                 state.sessions.clear();
                 state.labels.clear();
+                // 对齐 C++ killAll 后管理器恢复可见（与右键 DismissAll 路径一致）。
+                maybe_show_manager_after_last_mascot(&state);
             }
             crate::tray::TrayCommand::Quit => state.quit = true,
             crate::tray::TrayCommand::None => {}
         }
 
-        // IPC / HTTP 命令（主线程执行）。
-        while let Some(cmd) = commands.try_recv() {
+        // 后台完成事件只在主线程提交，I/O 和解压期间不借用 RuntimeView。
+        while let Some(completion) = background_jobs.try_recv() {
             let mut view = build_view(&mut state, &backend);
-            let response = crate::services::dispatch(&cmd.request, &mut view);
-            let _ = cmd.reply.send(response);
+            let response =
+                crate::services::complete_background_command(completion.result, &mut view);
+            background_jobs.finish(completion.id, response.clone());
+            if let Some(reply) = background_jobs.take_reply(completion.id) {
+                // 即使调用方已在 120 秒后断开，也要先在主线程完整提交结果；调用方收到的
+                // 是 202 已受理而非失败，因此不会把完成后的导入或更新误判为半写失败。
+                if reply.send(response).is_err() {
+                    crate::log::info(
+                        "services",
+                        "background operation completed after caller disconnected",
+                    );
+                }
+            }
+        }
+
+        // IPC / HTTP 命令。每轮设置上限，避免突发请求饿死桌宠 tick。
+        for _ in 0..32 {
+            let Some(cmd) = commands.try_recv() else {
+                break;
+            };
+            if cmd
+                .request
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                == Some("operation_status")
+            {
+                let response = background_jobs.operation_status(&cmd.request);
+                let _ = cmd.reply.send(response);
+                continue;
+            }
+            let mut view = build_view(&mut state, &backend);
+            match crate::services::prepare_background_command(&cmd.request, &view) {
+                BackgroundCommand::Job(job) => match background_jobs.submit(job, &cmd.reply) {
+                    Ok(operation_id) => {
+                        let _ = cmd.operation.send(operation_id);
+                    }
+                    Err(response) => {
+                        let _ = cmd.reply.send(response);
+                    }
+                },
+                BackgroundCommand::Reply(response) => {
+                    let _ = cmd.reply.send(response);
+                }
+                BackgroundCommand::NotBackground => {
+                    let response = crate::services::dispatch(&cmd.request, &mut view);
+                    let _ = cmd.reply.send(response);
+                }
+            }
+        }
+        // 更新安装器已启动：优雅退出运行时，释放 exe/dll 占用。
+        if crate::services::take_exit_after_install() {
+            state.quit = true;
         }
         if state.quit {
             break;
@@ -274,7 +344,7 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         // 固定频率推进一帧（环境每帧更新一次，与原版节拍一致）。
         let now = Instant::now();
         if now >= next_tick {
-            next_tick += Duration::from_millis(TICK_INTERVAL_MS);
+            next_tick = next_tick_after_tick(next_tick, now);
             tick_count += 1;
             if let Some(backend) = &backend {
                 let sandbox_origin = state.sandbox.as_ref().map(|s| s.top_left);
@@ -295,9 +365,26 @@ pub fn run(opts: RuntimeOptions) -> Result<u64, String> {
         std::thread::sleep(Duration::from_millis(1));
     }
 
+    // 退出前先关闭外部子进程，避免残留审批、输入请求或 Codex app-server。
+    crate::codex_appserver::disconnect();
+
     // 退出前保存"关闭前组合"，供静默启动恢复。
-    save_last_combination(&mut state);
+    // headless（--smoke 自检）跳过：避免用冒烟会话覆盖用户的关闭前组合。
+    if !opts.headless {
+        save_last_combination(&mut state);
+    }
     Ok(tick_count)
+}
+
+/// 计算下一帧时间；严重落后时跳过错过的帧，避免连续补帧饿死事件和命令处理。
+fn next_tick_after_tick(next_tick: Instant, now: Instant) -> Instant {
+    let interval = Duration::from_millis(TICK_INTERVAL_MS);
+    let scheduled = next_tick + interval;
+    if now >= scheduled {
+        now + interval
+    } else {
+        scheduled
+    }
 }
 
 fn build_view<'a>(
@@ -321,6 +408,9 @@ fn build_view<'a>(
         manager_rect: &mut state.manager_rect,
         codex_seen: &mut state.codex_seen,
         codex_page_requested: &mut state.codex_page_requested,
+        inspect_requested: &mut state.inspect_requested,
+        cli_runtime_mode: state.cli_runtime_mode,
+        startup_mode: state.startup_mode,
     }
 }
 
@@ -380,6 +470,38 @@ fn startup_spawn(
     }
 }
 
+/// 最后一只桌宠消失且管理器当时隐藏时，重新显示管理器。
+fn maybe_show_manager_after_last_mascot(state: &RunState) {
+    if should_restore_manager(
+        state.sessions.is_empty(),
+        state.windowed,
+        state.cli_runtime_mode,
+        state.startup_mode,
+    ) {
+        crate::services::launch_manager();
+    }
+}
+
+/// 管理器恢复判定：无存活桌宠，且非窗口模式 / CLI 运行时 / 静默启动。
+fn should_restore_manager(
+    sessions_empty: bool,
+    windowed: bool,
+    cli_runtime_mode: bool,
+    startup_mode: bool,
+) -> bool {
+    sessions_empty && !windowed && !cli_runtime_mode && !startup_mode
+}
+
+/// 各环境的桌宠计数（对齐 C++ refreshMascotCounts）。
+fn refresh_mascot_counts(envs: &EnvironmentSet, count: i64) {
+    for screen in &envs.screens {
+        screen.env.borrow_mut().mascot_count = count;
+    }
+    if let Some(sandbox) = &envs.sandbox {
+        sandbox.borrow_mut().mascot_count = count;
+    }
+}
+
 fn spawn_default(
     state: &mut RunState,
     backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>,
@@ -388,6 +510,11 @@ fn spawn_default(
 ) -> Result<u64, String> {
     // 窗口化模式在沙盒环境内生成；否则跟随管理器所在屏（对齐原版
     // mascotScreen 语义），管理器未知时回退主屏。
+    let name = state
+        .templates
+        .resolve(name)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| name.to_string());
     let env = if state.windowed {
         state.envs.sandbox.clone()
     } else {
@@ -410,7 +537,7 @@ fn spawn_default(
         &env,
         &state.templates,
         &mut state.next_session_id,
-        name,
+        &name,
         None,
         behavior,
     )
@@ -485,7 +612,7 @@ fn toggle_manager(state: &mut RunState) {
     if neurolings_platform::manager_window::is_running() {
         neurolings_platform::manager_window::toggle();
         let names = state.templates.names_sorted();
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         crate::tray::refresh(&names);
     } else {
         crate::services::launch_manager();
@@ -641,12 +768,9 @@ fn execute_menu_action(
             crate::services::launch_manager();
         }
         MenuAction::Inspect(id) => {
-            if let Some(session) = state.sessions.iter().find(|s| s.id == id) {
-                let text = crate::runtime::inspector::inspect_text(session);
-                if let Some(backend) = backend {
-                    backend.borrow_mut().show_text_dialog(&session.name, &text);
-                }
-            }
+            // 检查器改由管理器非模态展示，避免 MessageBox 卡住 tick 循环。
+            state.inspect_requested = Some(id);
+            crate::services::launch_manager();
         }
         MenuAction::DismissOthers(id) => {
             state.sessions.retain(|s| s.id == id);
@@ -655,10 +779,12 @@ fn execute_menu_action(
         MenuAction::DismissAll => {
             state.sessions.clear();
             state.labels.clear();
+            maybe_show_manager_after_last_mascot(state);
         }
         MenuAction::Dismiss(id) => {
             state.sessions.retain(|s| s.id != id);
             state.labels.retain(|_, mascot_id| *mascot_id != id);
+            maybe_show_manager_after_last_mascot(state);
         }
         MenuAction::Behavior(id, behavior) => {
             if let Some(session) = state.sessions.iter_mut().find(|s| s.id == id) {
@@ -739,6 +865,10 @@ fn session_contains(session: &Session, point: Vec2) -> bool {
 /// 推进一帧：环境覆盖、行为 tick、繁殖、音效、渲染。
 fn run_tick(state: &mut RunState, backend: &Option<Rc<RefCell<Box<dyn MascotBackend>>>>) {
     let windowed = state.windowed;
+
+    // 对齐 C++ tickMascotWidgets：refreshMascotCounts 在推进引擎之前，
+    // 值为本帧开始时的存活数。
+    refresh_mascot_counts(&state.envs, state.sessions.len() as i64);
 
     // 迭代顺序与 C++ 一致：从后往前。
     let mut i = state.sessions.len();
@@ -848,16 +978,11 @@ fn run_tick(state: &mut RunState, backend: &Option<Rc<RefCell<Box<dyn MascotBack
         state
             .labels
             .retain(|_, id| state.sessions.iter().any(|s| s.id == *id));
+        // 最后一只桌宠消失且管理器当时隐藏时，重新显示管理器
+        // （窗口模式 / CLI 运行时 / 静默启动除外）。
+        maybe_show_manager_after_last_mascot(state);
     }
 
-    // 各环境的桌宠计数。
-    let count = state.sessions.len() as i64;
-    for screen in &state.envs.screens {
-        screen.env.borrow_mut().mascot_count = count;
-    }
-    if let Some(sandbox) = &state.envs.sandbox {
-        sandbox.borrow_mut().mascot_count = count;
-    }
     state.envs.reset_scales();
 
     // 气泡生命周期。
@@ -987,6 +1112,19 @@ fn handle_breed_request(
     Ok(())
 }
 
+/// 解析窗口化背景色（#RRGGBB → 预乘 BGRA）。默认与设置项一致为红色。
+fn parse_windowed_bg(value: &str) -> [u8; 4] {
+    let hex = value.trim().trim_start_matches('#');
+    if hex.len() >= 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0xFF);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0x00);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0x00);
+        [b, g, r, 0xFF]
+    } else {
+        SANDBOX_BG
+    }
+}
+
 /// 沙盒窗口的合成渲染：底色 + 各会话帧。
 fn render_sandbox(state: &mut RunState) {
     let Some(Sandbox {
@@ -997,14 +1135,26 @@ fn render_sandbox(state: &mut RunState) {
     };
     let width = SANDBOX_WIDTH as u32;
     let height = SANDBOX_HEIGHT as u32;
+    let bg = parse_windowed_bg(
+        &state
+            .settings
+            .get_string(crate::settings::KEY_WINDOWED_BG, "#FF0000"),
+    );
     let mut canvas = vec![0u8; (width * height * 4) as usize];
-    for pixel in canvas.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&SANDBOX_BG);
+    for pixel in canvas.as_chunks_mut::<4>().0 {
+        pixel.copy_from_slice(&bg);
     }
     for session in state.sessions.iter_mut() {
-        let (frame, looking_right, anchor) = {
+        let (frame, looking_right, anchor, env_scale) = {
             let st = session.manager.state.borrow();
-            (st.active_frame.clone(), st.looking_right, st.anchor)
+            let scale = st
+                .env
+                .as_ref()
+                .map(|env| env.borrow().get_scale())
+                .filter(|scale| scale.is_finite() && *scale > 0.0)
+                .unwrap_or(1.0)
+                .clamp(0.05, 20.0);
+            (st.active_frame.clone(), st.looking_right, st.anchor, scale)
         };
         let name = frame.get_name(looking_right).to_lowercase();
         if name.is_empty() {
@@ -1015,18 +1165,30 @@ fn render_sandbox(state: &mut RunState) {
         };
         let mirrored = looking_right && frame.right_name.is_empty();
         let (anchor_x, anchor_y) = if mirrored {
-            (bitmap.width as f64 - frame.anchor.x, frame.anchor.y)
+            (
+                (bitmap.width as f64 - frame.anchor.x) / env_scale,
+                frame.anchor.y / env_scale,
+            )
         } else {
-            (frame.anchor.x, frame.anchor.y)
+            (frame.anchor.x / env_scale, frame.anchor.y / env_scale)
         };
         let off_x = (anchor.x - anchor_x).round() as i64;
         let off_y = (anchor.y - anchor_y).round() as i64;
         let (bw, bh) = (bitmap.width, bitmap.height);
-        let buffer = if mirrored {
+        let dest_w = ((bw as f64) / env_scale).round().max(1.0) as u32;
+        let dest_h = ((bh as f64) / env_scale).round().max(1.0) as u32;
+        let src = if mirrored {
             bitmap.mirrored.as_ref().unwrap_or(&bitmap.premul_bgra)
         } else {
             &bitmap.premul_bgra
         };
+        let scaled = if dest_w == bw && dest_h == bh {
+            None
+        } else {
+            Some(session::scale_premul_bgra(src, bw, bh, dest_w, dest_h))
+        };
+        let buffer = scaled.as_deref().unwrap_or(src);
+        let (bw, bh) = (dest_w, dest_h);
         for y in 0..bh as i64 {
             let dy = y + off_y;
             if dy < 0 || dy >= height as i64 {
@@ -1142,5 +1304,78 @@ fn migrate_removed_screens(state: &mut RunState) {
             session.manager.state.borrow_mut().env = Some(primary.clone());
             session.manager.reset_position();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EnvironmentSet, TICK_INTERVAL_MS, next_tick_after_tick, parse_windowed_bg,
+        refresh_mascot_counts, should_restore_manager,
+    };
+    use crate::runtime::environment::ScreenEnv;
+    use neurolings_engine::environment::Environment;
+    use neurolings_platform::{Rect, ScreenInfo};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn parse_windowed_bg_reads_rrggbb_as_bgra() {
+        assert_eq!(parse_windowed_bg("#FF0000"), [0, 0, 255, 255]);
+        assert_eq!(parse_windowed_bg("00FF00"), [0, 255, 0, 255]);
+    }
+
+    /// 管理器恢复判定（CloseAll / DismissAll / 最后一只消失共用）。
+    #[test]
+    fn should_restore_manager_only_when_desktop_and_empty() {
+        // 无桌宠 + 桌面模式 + 非 CLI/静默启动：恢复。
+        assert!(should_restore_manager(true, false, false, false));
+        // 仍有桌宠：不恢复。
+        assert!(!should_restore_manager(false, false, false, false));
+        // 窗口模式 / CLI 运行时 / 静默启动：均不恢复。
+        assert!(!should_restore_manager(true, true, false, false));
+        assert!(!should_restore_manager(true, false, true, false));
+        assert!(!should_restore_manager(true, false, false, true));
+    }
+
+    /// 主循环落后多个周期时只安排下一帧，不连续补跑历史 tick。
+    #[test]
+    fn overdue_tick_skips_backlog() {
+        let next_tick = Instant::now();
+        let now = next_tick + Duration::from_millis(TICK_INTERVAL_MS * 4);
+        let scheduled = next_tick_after_tick(next_tick, now);
+        assert_eq!(scheduled, now + Duration::from_millis(TICK_INTERVAL_MS));
+    }
+
+    /// 桌宠计数写入所有屏幕环境与沙盒环境。
+    #[test]
+    fn refresh_mascot_counts_writes_screens_and_sandbox() {
+        let rect = Rect {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+        };
+        let envs = EnvironmentSet {
+            screens: vec![ScreenEnv {
+                screen: ScreenInfo {
+                    monitor: rect,
+                    work_area: rect,
+                    scale: 1.0,
+                },
+                env: Rc::new(RefCell::new(Environment::default())),
+                active_uid: 0,
+            }],
+            sandbox: Some(Rc::new(RefCell::new(Environment::default()))),
+            push_target: 0,
+        };
+        refresh_mascot_counts(&envs, 3);
+        assert_eq!(envs.screens[0].env.borrow().mascot_count, 3);
+        assert_eq!(
+            envs.sandbox.as_ref().unwrap().borrow().mascot_count,
+            3,
+            "sandbox env should receive the same count"
+        );
     }
 }

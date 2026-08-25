@@ -124,7 +124,9 @@ class _CombinationsPageState extends State<CombinationsPage> {
   String _combinationDetailsText(BuildContext context, _CombinationItem item) {
     final lines = <String>[];
     lines.add(item.displayName);
-    lines.add('${_t(context, 'Saved at', '保存时间')}: ${_formatSavedAt(context, item.savedAt)}');
+    lines.add(
+      '${_t(context, 'Saved at', '保存时间')}: ${_formatSavedAt(context, item.savedAt)}',
+    );
     lines.add('${_t(context, 'Total mascots', '桌宠总数')}: ${item.total}');
     lines.add('');
     if (item.counts.isEmpty) {
@@ -150,7 +152,8 @@ class _CombinationsPageState extends State<CombinationsPage> {
     DateTime? savedAt;
     // 1) 尝试解析 savedAt（ISO8601）
     if (raw != null) {
-      final savedAtRaw = raw['savedAt'] as String? ?? raw['saved_at'] as String?;
+      final savedAtRaw =
+          raw['savedAt'] as String? ?? raw['saved_at'] as String?;
       if (savedAtRaw != null && savedAtRaw.isNotEmpty) {
         try {
           savedAt = DateTime.parse(savedAtRaw);
@@ -189,7 +192,8 @@ class _CombinationsPageState extends State<CombinationsPage> {
           if (members is List) {
             for (final v in members) {
               if (v is Map) {
-                final name = (v['template'] as String?)?.trim() ??
+                final name =
+                    (v['template'] as String?)?.trim() ??
                     (v['name'] as String?)?.trim();
                 if (name != null && name.isNotEmpty) {
                   counts[name] = (counts[name] ?? 0) + 1;
@@ -223,7 +227,6 @@ class _CombinationsPageState extends State<CombinationsPage> {
       final state = context.read<AppState>();
       await state.refresh();
 
-
       // 拉取组合列表（含关闭前状态）
       final result = await state.api.command({'command': 'list_combinations'});
       if (!mounted) return;
@@ -231,7 +234,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
       // 构建 items：首项固定 LastBeforeClose，其余按保存顺序（与原版一致，不排序）
       final items = <_CombinationItem>[];
 
-      final lastDisplay = _t(context, 'Last Combination Before Close', '上次关闭前的组合');
+      final lastDisplay = _t(
+        context,
+        'Last Combination Before Close',
+        '上次关闭前的组合',
+      );
       final rawLast = result['last_before_close'];
       _CombinationItem lastItem;
       if (rawLast is Map) {
@@ -242,7 +249,12 @@ class _CombinationsPageState extends State<CombinationsPage> {
           raw: rawLast.cast<String, dynamic>(),
         );
       } else {
-        lastItem = await _fetchDetailForId(_kLastBeforeCloseId, lastDisplay, _CombinationType.lastBeforeClose);
+        lastItem = await _fetchDetailForId(
+          _kLastBeforeCloseId,
+          lastDisplay,
+          _CombinationType.lastBeforeClose,
+        );
+        if (!mounted) return;
       }
       items.add(lastItem);
 
@@ -257,12 +269,14 @@ class _CombinationsPageState extends State<CombinationsPage> {
           final displayName = name.isEmpty
               ? _t(context, 'Untitled Combination', '未命名组合')
               : name;
-          items.add(_itemFromRaw(
-            id: id,
-            displayName: displayName,
-            type: _CombinationType.saved,
-            raw: m,
-          ));
+          items.add(
+            _itemFromRaw(
+              id: id,
+              displayName: displayName,
+              type: _CombinationType.saved,
+              raw: m,
+            ),
+          );
         }
       }
 
@@ -292,43 +306,75 @@ class _CombinationsPageState extends State<CombinationsPage> {
   ) async {
     try {
       final state = context.read<AppState>();
-      final res = await state.api.command({'command': 'get_combination', 'id': id});
+      final res = await state.api.command({
+        'command': 'get_combination',
+        'id': id,
+      });
       if (res.containsKey('error')) {
         // 后端未实现或无此组合
         if (res['code'] == 'combination_not_found' || res['status'] == 404) {
-          return _itemFromRaw(id: id, displayName: displayName, type: type, raw: null);
+          return _itemFromRaw(
+            id: id,
+            displayName: displayName,
+            type: type,
+            raw: null,
+          );
         }
         // 其他错误也视为空
-        return _itemFromRaw(id: id, displayName: displayName, type: type, raw: null);
+        return _itemFromRaw(
+          id: id,
+          displayName: displayName,
+          type: type,
+          raw: null,
+        );
       }
       // 兼容多种包装：{combination: {...}} 或直接 {...}
       Map<String, dynamic>? payload;
       if (res['combination'] is Map) {
         payload = (res['combination'] as Map).cast<String, dynamic>();
-      } else if (res['members'] is List || res['mascots'] is List || res['aggregated'] is List) {
+      } else if (res['members'] is List ||
+          res['mascots'] is List ||
+          res['aggregated'] is List) {
         payload = res;
       } else if (res['name'] != null) {
         payload = res;
       }
-      return _itemFromRaw(id: id, displayName: displayName, type: type, raw: payload);
+      return _itemFromRaw(
+        id: id,
+        displayName: displayName,
+        type: type,
+        raw: payload,
+      );
     } catch (_) {
-      return _itemFromRaw(id: id, displayName: displayName, type: type, raw: null);
+      return _itemFromRaw(
+        id: id,
+        displayName: displayName,
+        type: type,
+        raw: null,
+      );
     }
   }
 
-  Future<void> _notify(String title, String message, InfoBarSeverity severity) async {
+  Future<void> _notify(
+    String title,
+    String message,
+    InfoBarSeverity severity,
+  ) async {
     if (!mounted) return;
-    await displayInfoBar(context, builder: (context, close) {
-      return InfoBar(
-        title: Text(title),
-        content: Text(message),
-        severity: severity,
-        action: IconButton(
-          icon: const Icon(FluentIcons.clear),
-          onPressed: close,
-        ),
-      );
-    });
+    await displayInfoBar(
+      context,
+      builder: (context, close) {
+        return InfoBar(
+          title: Text(title),
+          content: Text(message),
+          severity: severity,
+          action: IconButton(
+            icon: const Icon(FluentIcons.clear),
+            onPressed: close,
+          ),
+        );
+      },
+    );
   }
 
   /// 保存当前运行组合：弹窗默认值 Combination %1，支持空名回退
@@ -345,7 +391,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
     if (state.running.isEmpty) {
       await _notify(
         _t(context, 'No mascots to save', '没有可保存的桌宠'),
-        _t(context, 'There are no active mascots to save.', '当前没有运行中的桌宠，无法保存组合。'),
+        _t(
+          context,
+          'There are no active mascots to save.',
+          '当前没有运行中的桌宠，无法保存组合。',
+        ),
         InfoBarSeverity.warning,
       );
       return;
@@ -354,7 +404,10 @@ class _CombinationsPageState extends State<CombinationsPage> {
     final defaultName = _defaultCombinationName(context);
     final controller = TextEditingController(text: defaultName);
     // 选中全部，方便直接改名
-    controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.text.length,
+    );
 
     final confirmedName = await showDialog<String>(
       context: context,
@@ -403,9 +456,13 @@ class _CombinationsPageState extends State<CombinationsPage> {
 
     setState(() => _busy = true);
     try {
-      final result = await state.api.command({'command': 'save_combination', 'name': name});
+      final result = await state.api.command({
+        'command': 'save_combination',
+        'name': name,
+      });
       if (!mounted) return;
       await _load();
+      if (!mounted) return;
       final count = result['count'];
       await _notify(
         _t(context, 'Combination saved', '组合已保存'),
@@ -414,7 +471,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      await _notify(_t(context, 'Save failed', '保存失败'), e.toString(), InfoBarSeverity.error);
+      await _notify(
+        _t(context, 'Save failed', '保存失败'),
+        e.toString(),
+        InfoBarSeverity.error,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -425,7 +486,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
     if (!item.isRestorable) {
       await _notify(
         _t(context, 'Nothing to restore', '无可恢复内容'),
-        _t(context, 'This combination does not contain any mascots.', '此组合不包含任何桌宠。'),
+        _t(
+          context,
+          'This combination does not contain any mascots.',
+          '此组合不包含任何桌宠。',
+        ),
         InfoBarSeverity.warning,
       );
       return;
@@ -433,42 +498,65 @@ class _CombinationsPageState extends State<CombinationsPage> {
     setState(() => _busy = true);
     try {
       final state = context.read<AppState>();
-      final result = await state.api.command({'command': 'restore_combination', 'id': item.id});
+      final result = await state.api.command({
+        'command': 'restore_combination',
+        'id': item.id,
+      });
       if (!mounted) return;
       await state.refresh();
+      if (!mounted) return;
 
       final spawned = (result['spawned'] as num?)?.toInt() ?? item.total;
       final missingRaw = result['missing'];
       final failedRaw = result['failed'];
       List<String> missing = [];
       List<String> failed = [];
-      if (missingRaw is List) missing = missingRaw.map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
-      if (failedRaw is List) failed = failedRaw.map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+      if (missingRaw is List) {
+        missing = missingRaw
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      if (failedRaw is List) {
+        failed = failedRaw
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
       // 去重（与原版 missing.removeDuplicates / failed.removeDuplicates 对齐）
       missing = missing.toSet().toList();
       failed = failed.toSet().toList();
 
       // 限位提示：若总数接近或超过200，追加提示
-      final atLimit = spawned >= _kMaxPerCombination || item.total > _kMaxPerCombination;
+      final atLimit =
+          spawned >= _kMaxPerCombination || item.total > _kMaxPerCombination;
 
       if (missing.isNotEmpty) {
         await _notify(
           _t(context, 'Restored with missing templates', '已恢复（部分模板缺失）'),
-          _t(context, 'Restored $spawned mascot(s). Missing templates: ${missing.join(', ')}',
-              '已恢复 $spawned 只桌宠。缺失模板：${missing.join('、')}'),
+          _t(
+            context,
+            'Restored $spawned mascot(s). Missing templates: ${missing.join(', ')}',
+            '已恢复 $spawned 只桌宠。缺失模板：${missing.join('、')}',
+          ),
           InfoBarSeverity.warning,
         );
       } else if (failed.isNotEmpty) {
         await _notify(
           _t(context, 'Restored with failures', '已恢复（部分启动失败）'),
-          _t(context, 'Restored $spawned mascot(s). Some mascots could not be started: ${failed.join(', ')}',
-              '已恢复 $spawned 只桌宠。部分桌宠未能启动：${failed.join('、')}'),
+          _t(
+            context,
+            'Restored $spawned mascot(s). Some mascots could not be started: ${failed.join(', ')}',
+            '已恢复 $spawned 只桌宠。部分桌宠未能启动：${failed.join('、')}',
+          ),
           InfoBarSeverity.warning,
         );
       } else {
-        var msg = '"${item.displayName}" — ${_t(context, 'spawned $spawned mascot(s)', '已召唤 $spawned 只桌宠')}';
+        var msg =
+            '"${item.displayName}" — ${_t(context, 'spawned $spawned mascot(s)', '已召唤 $spawned 只桌宠')}';
         if (atLimit) {
-          msg += '  (${_t(context, 'Safety limit: $_kMaxPerCombination per combination', '安全限位：单组合最多 $_kMaxPerCombination 只')})';
+          msg +=
+              '  (${_t(context, 'Safety limit: $_kMaxPerCombination per combination', '安全限位：单组合最多 $_kMaxPerCombination 只')})';
         }
         await _notify(
           _t(context, 'Combination restored', '组合已恢复'),
@@ -478,7 +566,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      await _notify(_t(context, 'Restore failed', '恢复失败'), e.toString(), InfoBarSeverity.error);
+      await _notify(
+        _t(context, 'Restore failed', '恢复失败'),
+        e.toString(),
+        InfoBarSeverity.error,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -491,9 +583,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
       context: context,
       builder: (dialogContext) => ContentDialog(
         title: Text(isZh ? '删除组合' : 'Delete Combination'),
-        content: Text(isZh
-            ? '确定删除组合 "${item.displayName}" 吗？此操作不可撤销。'
-            : 'Delete saved combination "${item.displayName}"? This cannot be undone.'),
+        content: Text(
+          isZh
+              ? '确定删除组合 "${item.displayName}" 吗？此操作不可撤销。'
+              : 'Delete saved combination "${item.displayName}"? This cannot be undone.',
+        ),
         actions: [
           Button(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -516,19 +610,27 @@ class _CombinationsPageState extends State<CombinationsPage> {
       // 删除后选中回到首项
       _selectedId = _kLastBeforeCloseId;
       await _load();
+      if (!mounted) return;
       await _notify(
         _t(context, 'Deleted', '已删除'),
-        _t(context, 'Combination "${item.displayName}" deleted.', '组合 "${item.displayName}" 已删除。'),
+        _t(
+          context,
+          'Combination "${item.displayName}" deleted.',
+          '组合 "${item.displayName}" 已删除。',
+        ),
         InfoBarSeverity.success,
       );
     } catch (e) {
       if (!mounted) return;
-      await _notify(_t(context, 'Delete failed', '删除失败'), e.toString(), InfoBarSeverity.error);
+      await _notify(
+        _t(context, 'Delete failed', '删除失败'),
+        e.toString(),
+        InfoBarSeverity.error,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
-
 
   @override
   void initState() {
@@ -555,16 +657,22 @@ class _CombinationsPageState extends State<CombinationsPage> {
     return ScaffoldPage.scrollable(
       header: PageHeader(
         title: Text(l10n.navCombinations),
-        commandBar: Row(mainAxisSize: MainAxisSize.min, children: [
-          Button(
-            onPressed: _loading || _busy ? null : _load,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(FluentIcons.refresh),
-              const SizedBox(width: 8),
-              Text(_t(context, 'Refresh', '刷新')),
-            ]),
-          ),
-        ]),
+        commandBar: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Button(
+              onPressed: _loading || _busy ? null : _load,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(FluentIcons.refresh),
+                  const SizedBox(width: 8),
+                  Text(_t(context, 'Refresh', '刷新')),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
       children: [
         // 顶部说明
@@ -584,44 +692,59 @@ class _CombinationsPageState extends State<CombinationsPage> {
           margin: const EdgeInsets.symmetric(horizontal: 16),
           child: Padding(
             padding: const EdgeInsets.all(14),
-            child: LayoutBuilder(builder: (context, constraints) {
-              final compact = constraints.maxWidth < 520;
-              final saveButton = FilledButton(
-                onPressed: (_busy || !state.runtimeOnline) ? null : _saveCurrent,
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(FluentIcons.save),
-                  const SizedBox(width: 8),
-                  Text(isZh ? '保存当前组合' : 'Save Current Combination'),
-                ]),
-              );
-              final refreshButton = Button(
-                onPressed: _loading ? null : _load,
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(FluentIcons.refresh),
-                  const SizedBox(width: 6),
-                  Text(isZh ? '刷新' : 'Refresh'),
-                ]),
-              );
-              if (compact) {
-                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  saveButton,
-                  const SizedBox(height: 8),
-                  refreshButton,
-                ]);
-              }
-              return Row(children: [
-                saveButton,
-                const SizedBox(width: 8),
-                refreshButton,
-                const Spacer(),
-                Text(
-                  isZh
-                      ? '${state.running.length} 只桌宠正在运行'
-                      : '${state.running.length} mascots running',
-                  style: FluentTheme.of(context).typography.caption,
-                ),
-              ]);
-            }),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 520;
+                final saveButton = FilledButton(
+                  onPressed: (_busy || !state.runtimeOnline)
+                      ? null
+                      : _saveCurrent,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(FluentIcons.save),
+                      const SizedBox(width: 8),
+                      Text(isZh ? '保存当前组合' : 'Save Current Combination'),
+                    ],
+                  ),
+                );
+                final refreshButton = Button(
+                  onPressed: _loading ? null : _load,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(FluentIcons.refresh),
+                      const SizedBox(width: 6),
+                      Text(isZh ? '刷新' : 'Refresh'),
+                    ],
+                  ),
+                );
+                if (compact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      saveButton,
+                      const SizedBox(height: 8),
+                      refreshButton,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    saveButton,
+                    const SizedBox(width: 8),
+                    refreshButton,
+                    const Spacer(),
+                    Text(
+                      isZh
+                          ? '${state.running.length} 只桌宠正在运行'
+                          : '${state.running.length} mascots running',
+                      style: FluentTheme.of(context).typography.caption,
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -631,9 +754,11 @@ class _CombinationsPageState extends State<CombinationsPage> {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: InfoBar(
             title: Text(isZh ? '安全限位' : 'Safety limits'),
-            content: Text(isZh
-                ? '单种桌宠最多 $_kMaxPerEntry 只，单组合最多 $_kMaxPerCombination 只。恢复时超出部分将被截断并在日志中警告。'
-                : 'At most $_kMaxPerEntry per mascot and $_kMaxPerCombination per combination. Excess is clamped on restore.'),
+            content: Text(
+              isZh
+                  ? '单种桌宠最多 $_kMaxPerEntry 只，单组合最多 $_kMaxPerCombination 只。恢复时超出部分将被截断并在日志中警告。'
+                  : 'At most $_kMaxPerEntry per mascot and $_kMaxPerCombination per combination. Excess is clamped on restore.',
+            ),
             severity: InfoBarSeverity.info,
             isLong: true,
           ),
@@ -652,209 +777,309 @@ class _CombinationsPageState extends State<CombinationsPage> {
             margin: const EdgeInsets.symmetric(horizontal: 16),
             child: InfoBar(
               title: Text(isZh ? '无法读取组合列表' : 'Failed to load combinations'),
-              content: Text('$_error\n${isZh ? '请确认运行时已启动，且设置页已启用 HTTP API（http/enabled）。' : 'Ensure the runtime is running and HTTP API is enabled (http/enabled).'}'),
+              content: Text(
+                '$_error\n${AppLocalizations.of(context).combinationsOfflineHint}',
+              ),
               severity: InfoBarSeverity.warning,
               isLong: true,
             ),
           )
         else
           // 列表 + 详情 响应式布局
-          LayoutBuilder(builder: (context, constraints) {
-            final isCompact = constraints.maxWidth < 720;
-            final listPanel = Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    isZh ? '已保存的组合' : 'Saved Combinations',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  // 首项 Last Before Close 固定行始终展示
-                  ..._items.map((item) {
-                    final isSelected = item.id == _selectedId;
-                    final summary = _combinationSummary(context, item);
-                    final total = item.total;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: HoverButton(
-                        onPressed: () => setState(() => _selectedId = item.id),
-                        builder: (context, states) => Container(
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? FluentTheme.of(context).accentColor.withOpacity(0.12)
-                                : (states.isHovered
-                                    ? FluentTheme.of(context).resources.controlFillColorDefault
-                                    : Colors.transparent),
-                            border: Border.all(
-                              color: isSelected
-                                  ? FluentTheme.of(context).accentColor
-                                  : Colors.grey.withOpacity(0.3),
-                              width: isSelected ? 1.4 : 0.6,
-                            ),
-                            borderRadius: BorderRadius.circular(7),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                          child: Row(children: [
-                            Icon(
-                              item.isLastBeforeClose ? FluentIcons.history : FluentIcons.group,
-                              size: 16,
-                              color: item.isRestorable ? null : FluentTheme.of(context).resources.textFillColorDisabled,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(
-                                  item.displayName,
-                                  style: FluentTheme.of(context).typography.bodyStrong?.copyWith(
-                                        color: item.isRestorable
-                                            ? null
-                                            : FluentTheme.of(context).resources.textFillColorDisabled,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isCompact = constraints.maxWidth < 720;
+              final listPanel = Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isZh ? '已保存的组合' : 'Saved Combinations',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      // 首项 Last Before Close 固定行始终展示
+                      ..._items.map((item) {
+                        final isSelected = item.id == _selectedId;
+                        final summary = _combinationSummary(context, item);
+                        final total = item.total;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: HoverButton(
+                            onPressed: () =>
+                                setState(() => _selectedId = item.id),
+                            builder: (context, states) => Container(
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? FluentTheme.of(
+                                        context,
+                                      ).accentColor.withValues(alpha: 0.12)
+                                    : (states.isHovered
+                                          ? FluentTheme.of(
+                                              context,
+                                            ).resources.controlFillColorDefault
+                                          : Colors.transparent),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? FluentTheme.of(context).accentColor
+                                      : Colors.grey.withValues(alpha: 0.3),
+                                  width: isSelected ? 1.4 : 0.6,
+                                ),
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    item.isLastBeforeClose
+                                        ? FluentIcons.history
+                                        : FluentIcons.group,
+                                    size: 16,
+                                    color: item.isRestorable
+                                        ? null
+                                        : FluentTheme.of(
+                                            context,
+                                          ).resources.textFillColorDisabled,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.displayName,
+                                          style: FluentTheme.of(context)
+                                              .typography
+                                              .bodyStrong
+                                              ?.copyWith(
+                                                color: item.isRestorable
+                                                    ? null
+                                                    : FluentTheme.of(context)
+                                                          .resources
+                                                          .textFillColorDisabled,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          total == 0
+                                              ? (isZh ? '空组合' : 'Empty')
+                                              : '$summary  ·  $total ${isZh
+                                                    ? '只'
+                                                    : total == 1
+                                                    ? 'mascot'
+                                                    : 'mascots'}',
+                                          style: FluentTheme.of(context)
+                                              .typography
+                                              .caption
+                                              ?.copyWith(
+                                                color: FluentTheme.of(context)
+                                                    .resources
+                                                    .textFillColorSecondary,
+                                              ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (item.isLastBeforeClose)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
                                       ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  total == 0
-                                      ? (isZh ? '空组合' : 'Empty')
-                                      : '$summary  ·  $total ${isZh ? '只' : total == 1 ? 'mascot' : 'mascots'}',
-                                  style: FluentTheme.of(context).typography.caption?.copyWith(
-                                        color: FluentTheme.of(context).resources.textFillColorSecondary,
+                                      decoration: BoxDecoration(
+                                        color: FluentTheme.of(context)
+                                            .resources
+                                            .cardBackgroundFillColorDefault,
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.grey.withValues(
+                                            alpha: 0.3,
+                                          ),
+                                        ),
                                       ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ]),
+                                      child: Text(
+                                        isZh ? '自动' : 'Auto',
+                                        style: FluentTheme.of(
+                                          context,
+                                        ).typography.caption,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                            if (item.isLastBeforeClose)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: FluentTheme.of(context).resources.cardBackgroundFillColorDefault,
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
-                                ),
-                                child: Text(
-                                  isZh ? '自动' : 'Auto',
-                                  style: FluentTheme.of(context).typography.caption,
-                                ),
-                              ),
-                          ]),
-                        ),
-                      ),
-                    );
-                  }),
-                  if (_items.length == 1 && _items.first.total == 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        isZh
-                            ? '暂无保存的组合。先召唤几只桌宠，然后点击“保存当前组合”。'
-                            : 'No saved combinations yet. Summon a few mascots and save the current mix.',
-                        style: FluentTheme.of(context).typography.caption,
-                      ),
-                    ),
-                ]),
-              ),
-            );
-
-            final detailsPanel = Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    isZh ? '详情' : 'Details',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  if (selected == null)
-                    Text(
-                      isZh ? '请选择一个组合。' : 'Select a combination.',
-                      style: FluentTheme.of(context).typography.body?.copyWith(
-                            color: FluentTheme.of(context).resources.textFillColorSecondary,
                           ),
-                    )
-                  else ...[
-                    SelectableText(
-                      _combinationDetailsText(context, selected),
-                      style: FluentTheme.of(context).typography.body,
-                    ),
-                    const SizedBox(height: 16),
-                    // 操作按钮
-                    LayoutBuilder(builder: (context, c2) {
-                      final compactBtn = c2.maxWidth < 520;
-                      final restoreBtn = FilledButton(
-                        onPressed: (_busy || selected == null || !selected.isRestorable) ? null : () => _restore(selected!),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(FluentIcons.forward, size: 14),
-                          const SizedBox(width: 6),
-                          Text(isZh ? '恢复组合' : 'Restore Combination'),
-                        ]),
-                      );
-                      final deleteBtn = Button(
-                        onPressed: (_busy || selected == null || !selected.canDelete) ? null : () => _delete(selected!),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(FluentIcons.delete, size: 14),
-                          const SizedBox(width: 6),
-                          Text(isZh ? '删除已保存组合' : 'Delete Saved Combination'),
-                        ]),
-                      );
-                      if (compactBtn) {
-                        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                          restoreBtn,
-                          const SizedBox(height: 8),
-                          deleteBtn,
-                        ]);
-                      }
-                      return Row(children: [
-                        restoreBtn,
-                        const SizedBox(width: 8),
-                        deleteBtn,
-                      ]);
-                    }),
-                    if (!selected.isRestorable)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          isZh ? '此组合为空，无法恢复。' : 'This combination is empty and cannot be restored.',
-                          style: FluentTheme.of(context).typography.caption?.copyWith(
-                                color: FluentTheme.of(context).resources.textFillColorSecondary,
-                              ),
+                        );
+                      }),
+                      if (_items.length == 1 && _items.first.total == 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            isZh
+                                ? '暂无保存的组合。先召唤几只桌宠，然后点击“保存当前组合”。'
+                                : 'No saved combinations yet. Summon a few mascots and save the current mix.',
+                            style: FluentTheme.of(context).typography.caption,
+                          ),
                         ),
-                      ),
-                    if (selected.canDelete == false)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          isZh ? '“上次关闭前的组合”为系统自动保存，不可删除。' : '"Last Combination Before Close" is auto-saved and cannot be deleted.',
-                          style: FluentTheme.of(context).typography.caption?.copyWith(
-                                color: FluentTheme.of(context).resources.textFillColorSecondary,
-                              ),
-                        ),
-                      ),
-                  ],
-                ]),
-              ),
-            );
+                    ],
+                  ),
+                ),
+              );
 
-            if (isCompact) {
+              final detailsPanel = Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isZh ? '详情' : 'Details',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      if (selected == null)
+                        Text(
+                          isZh ? '请选择一个组合。' : 'Select a combination.',
+                          style: FluentTheme.of(context).typography.body
+                              ?.copyWith(
+                                color: FluentTheme.of(
+                                  context,
+                                ).resources.textFillColorSecondary,
+                              ),
+                        )
+                      else ...[
+                        SelectableText(
+                          _combinationDetailsText(context, selected),
+                          style: FluentTheme.of(context).typography.body,
+                        ),
+                        const SizedBox(height: 16),
+                        // 操作按钮
+                        LayoutBuilder(
+                          builder: (context, c2) {
+                            final compactBtn = c2.maxWidth < 520;
+                            final restoreBtn = FilledButton(
+                              onPressed:
+                                  (_busy ||
+                                      selected == null ||
+                                      !selected.isRestorable)
+                                  ? null
+                                  : () => _restore(selected!),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(FluentIcons.forward, size: 14),
+                                  const SizedBox(width: 6),
+                                  Text(isZh ? '恢复组合' : 'Restore Combination'),
+                                ],
+                              ),
+                            );
+                            final deleteBtn = Button(
+                              onPressed:
+                                  (_busy ||
+                                      selected == null ||
+                                      !selected.canDelete)
+                                  ? null
+                                  : () => _delete(selected!),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(FluentIcons.delete, size: 14),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    isZh
+                                        ? '删除已保存组合'
+                                        : 'Delete Saved Combination',
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (compactBtn) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  restoreBtn,
+                                  const SizedBox(height: 8),
+                                  deleteBtn,
+                                ],
+                              );
+                            }
+                            return Row(
+                              children: [
+                                restoreBtn,
+                                const SizedBox(width: 8),
+                                deleteBtn,
+                              ],
+                            );
+                          },
+                        ),
+                        if (!selected.isRestorable)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              isZh
+                                  ? '此组合为空，无法恢复。'
+                                  : 'This combination is empty and cannot be restored.',
+                              style: FluentTheme.of(context).typography.caption
+                                  ?.copyWith(
+                                    color: FluentTheme.of(
+                                      context,
+                                    ).resources.textFillColorSecondary,
+                                  ),
+                            ),
+                          ),
+                        if (selected.canDelete == false)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              isZh
+                                  ? '“上次关闭前的组合”为系统自动保存，不可删除。'
+                                  : '"Last Combination Before Close" is auto-saved and cannot be deleted.',
+                              style: FluentTheme.of(context).typography.caption
+                                  ?.copyWith(
+                                    color: FluentTheme.of(
+                                      context,
+                                    ).resources.textFillColorSecondary,
+                                  ),
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+
+              if (isCompact) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
+                      listPanel,
+                      const SizedBox(height: 8),
+                      detailsPanel,
+                    ],
+                  ),
+                );
+              }
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(children: [
-                  listPanel,
-                  const SizedBox(height: 8),
-                  detailsPanel,
-                ]),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 2, child: listPanel),
+                    const SizedBox(width: 10),
+                    Expanded(child: detailsPanel),
+                  ],
+                ),
               );
-            }
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(flex: 2, child: listPanel),
-                const SizedBox(width: 10),
-                Expanded(child: detailsPanel),
-              ]),
-            );
-          }),
+            },
+          ),
 
         // 底部运行时离线提示
         if (!state.runtimeOnline && !_loading)
@@ -862,7 +1087,9 @@ class _CombinationsPageState extends State<CombinationsPage> {
             padding: const EdgeInsets.all(16),
             child: InfoBar(
               title: Text(isZh ? '运行时离线' : 'Runtime offline'),
-              content: Text(isZh ? '请先在主页启动运行时。' : 'Start the runtime on the Home page.'),
+              content: Text(
+                isZh ? '请先在主页启动运行时。' : 'Start the runtime on the Home page.',
+              ),
               severity: InfoBarSeverity.warning,
             ),
           ),

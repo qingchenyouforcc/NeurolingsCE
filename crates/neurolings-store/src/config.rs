@@ -2,7 +2,7 @@
 
 const DEFAULT_INDEX_URL: &str = match option_env!("NEUROLINGSCE_MASCOT_INDEX_URL") {
     Some(v) => v,
-    None => "",
+    None => "https://blog.qingchenyou.asia/NeurolingsCE-Mascots-Staging/index-v1.json",
 };
 const DEFAULT_SUBMISSION_URL: &str = match option_env!("NEUROLINGSCE_SUBMISSION_SERVICE_URL") {
     Some(v) => v,

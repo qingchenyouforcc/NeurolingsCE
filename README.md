@@ -26,14 +26,22 @@ crates/
 
 ## 构建
 
-```powershell
+```shell
 # Rust（运行时 + CLI + 全部 crate）
-cargo build --release
-cargo test --workspace
+cargo build --release --workspace --locked
+cargo test --workspace --locked
 
 # Flutter 管理器
-cd manager && flutter pub get && flutter build windows --release
+cd manager
+flutter pub get
+flutter analyze
+flutter test
+flutter build windows --release  # Windows
+flutter build linux --release    # Linux
+flutter build macos --release    # macOS
 ```
+
+Flutter 的三个构建命令需分别在对应宿主系统执行。
 
 ## 运行
 
@@ -57,11 +65,13 @@ curl http://127.0.0.1:32456/shijima/api/v1/ping
 
 ## 打包
 
-见 `packaging/README.md`：`packaging/package-windows.ps1` 汇总 release 目录
-并生成 `SHA256SUMS.txt`；更新清单遵循 NeurolingsCE 的 `updater-schema`。
+手动触发 `.github/workflows/build-release.yaml` 可同时生成 Windows ZIP、Linux
+tar.gz 和 macOS App ZIP。Windows 本地也可运行 `packaging/package-windows.ps1`
+汇总 release 目录并生成 `SHA256SUMS.txt`；更新清单遵循 NeurolingsCE 的
+`updater-schema`。
 
 ## 状态
 
-各里程碑完成情况见 `docs/REWRITE_PLAN.md` 的进度记录。Linux/macOS 的窗口
-后端已通过交叉编译检查，需真机做视觉验证；商店/投稿服务端与 GitHub App 配置
-需维护者部署后方可启用（与原项目计划一致）。
+各里程碑完成情况见 `docs/REWRITE_PLAN.md` 的进度记录。Windows、Linux 和
+macOS 的 Rust/Flutter 构建已纳入 CI；平台窗口、托盘、多屏和辅助功能权限仍需
+真机做视觉与交互验收。商店/投稿服务端与 GitHub App 配置需维护者部署后方可启用。

@@ -441,6 +441,14 @@ mod tests {
         (actions, behaviors)
     }
 
+    fn read_embedded_default() -> (String, String) {
+        let base =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/DefaultMascot");
+        let actions = std::fs::read_to_string(base.join("actions.xml")).unwrap();
+        let behaviors = std::fs::read_to_string(base.join("behaviors.xml")).unwrap();
+        (actions, behaviors)
+    }
+
     fn run_sequence(name: &str, ticks: usize) -> Vec<(i64, f64, f64, String)> {
         let (actions, behaviors) = read_pack(name);
         let mut manager = Manager::new(
@@ -488,5 +496,67 @@ mod tests {
             let trace = run_sequence(pack, 120);
             assert_eq!(trace.len(), 120, "{pack} ran 120 ticks");
         }
+    }
+
+    #[test]
+    fn default_full_behavior_list_has_no_script_errors() {
+        let (actions, behaviors) = read_embedded_default();
+        let script_ctx = ScriptContext::new();
+        let mut manager = Manager::new(
+            &actions,
+            &behaviors,
+            Initializer::new(Vec2::new(200.0, 0.0), "", false),
+            Some(script_ctx.clone()),
+        )
+        .expect("manager created");
+        manager.state.borrow_mut().env = Some(default_env());
+
+        manager.tick().expect("first tick");
+
+        assert_eq!(
+            script_ctx.reported_error_count(),
+            0,
+            "the complete initial behavior list must evaluate without script errors"
+        );
+    }
+
+    #[test]
+    fn shared_script_context_keeps_mascot_states_isolated() {
+        let (actions, behaviors) = read_embedded_default();
+        let script_ctx = ScriptContext::new();
+        let mut first = Manager::new(
+            &actions,
+            &behaviors,
+            Initializer::new(Vec2::new(200.0, 0.0), "", false),
+            Some(script_ctx.clone()),
+        )
+        .unwrap();
+        first.state.borrow_mut().env = Some(default_env());
+
+        let negative_env = default_env();
+        {
+            let mut env = negative_env.borrow_mut();
+            env.screen = Area::new(-1080.0, 0.0, 0.0, -1920.0);
+            env.work_area = env.screen;
+            env.floor = HBorder::new(0.0, -1920.0, 0.0);
+            env.ceiling = HBorder::new(-1080.0, -1920.0, 0.0);
+        }
+        let mut second = Manager::new(
+            &actions,
+            &behaviors,
+            Initializer::new(Vec2::new(-1000.0, -500.0), "", true),
+            Some(script_ctx.clone()),
+        )
+        .unwrap();
+        second.state.borrow_mut().env = Some(negative_env);
+
+        for _ in 0..20 {
+            first.tick().unwrap();
+            second.tick().unwrap();
+        }
+
+        assert!(first.state.borrow().anchor.x >= 0.0);
+        assert!(second.state.borrow().anchor.x < 0.0);
+        assert_eq!(script_ctx.reported_error_count(), 0);
     }
 }

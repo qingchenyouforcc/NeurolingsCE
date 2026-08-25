@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-cli"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "neurolings-common",
  "neurolings-pack",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-common"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-engine"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "neurolings-common",
  "rand 0.9.5",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-pack"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "flate2",
  "neurolings-common",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-platform"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "neurolings-common",
  "objc2",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-runtime"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "neurolings-store"
-version = "0.5.3"
+version = "1.0.0"
 dependencies = [
  "hex",
  "keyring",

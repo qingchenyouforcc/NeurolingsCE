@@ -20,6 +20,9 @@ const INACTIVE_IE: [f64; 4] = [-50.0, -50.0, -50.0, -50.0];
 pub struct ScreenEnv {
     pub screen: ScreenInfo,
     pub env: Rc<RefCell<Environment>>,
+    /// 上一帧前台窗口的 uid；0 表示无有效前台窗口。
+    /// 用于区分"同一窗口移动"与"切换到另一个窗口"（对齐 C++ m_previousWindow.uid）。
+    pub(crate) active_uid: u64,
 }
 
 /// 多屏环境集合。键为显示器物理矩形。
@@ -55,8 +58,10 @@ impl EnvironmentSet {
 
         self.push_target = active.map(|a| a.handle).unwrap_or(0);
         let latest = backend.screens();
-        // 复用已有环境，新增显示器创建新环境，消失的显示器丢弃。
-        let mut retained: HashMap<(i32, i32, i32, i32), Rc<RefCell<Environment>>> = self
+        // 复用已有环境（连同上一帧前台窗口 uid），新增显示器创建新环境，
+        // 消失的显示器丢弃。
+        type Retained = HashMap<(i32, i32, i32, i32), (Rc<RefCell<Environment>>, u64)>;
+        let mut retained: Retained = self
             .screens
             .drain(..)
             .map(|s| {
@@ -67,7 +72,7 @@ impl EnvironmentSet {
                         s.screen.monitor.right,
                         s.screen.monitor.bottom,
                     ),
-                    s.env,
+                    (s.env, s.active_uid),
                 )
             })
             .collect();
@@ -81,10 +86,10 @@ impl EnvironmentSet {
                     screen.monitor.right,
                     screen.monitor.bottom,
                 );
-                let env = retained
+                let (env, prev_uid) = retained
                     .remove(&key)
-                    .unwrap_or_else(|| Rc::new(RefCell::new(Environment::default())));
-                Self::update_env(
+                    .unwrap_or_else(|| (Rc::new(RefCell::new(Environment::default())), 0));
+                let active_uid = Self::update_env(
                     &env,
                     &screen,
                     cursor,
@@ -93,8 +98,13 @@ impl EnvironmentSet {
                     detach,
                     allows_pushing,
                     allows_breeding,
+                    prev_uid,
                 );
-                ScreenEnv { screen, env }
+                ScreenEnv {
+                    screen,
+                    env,
+                    active_uid,
+                }
             })
             .collect();
 
@@ -116,6 +126,8 @@ impl EnvironmentSet {
                     right: w,
                     bottom: h,
                 },
+                // 沙盒使用窗口局部逻辑坐标，无 DPI 缩放。
+                scale: 1.0,
             };
             Self::update_env(
                 sandbox,
@@ -126,6 +138,7 @@ impl EnvironmentSet {
                 detach,
                 false,
                 allows_breeding,
+                0,
             );
             // 沙盒环境的光标使用窗口局部坐标。
             if let Some(origin) = sandbox_origin {
@@ -147,6 +160,7 @@ impl EnvironmentSet {
     }
 
     /// 单个环境的逐帧几何与交互区更新。
+    /// 返回本帧有效前台窗口的 uid（无则 0），供下一帧做同窗口判断。
     #[allow(clippy::too_many_arguments)]
     fn update_env(
         env: &Rc<RefCell<Environment>>,
@@ -157,7 +171,8 @@ impl EnvironmentSet {
         detach_threshold: f64,
         allows_pushing: bool,
         allows_breeding: bool,
-    ) {
+        prev_active_uid: u64,
+    ) -> u64 {
         let mut e = env.borrow_mut();
 
         // 任务栏高度由显示器矩形与工作区的差值推得（仅处理上/下边缘）。
@@ -196,9 +211,12 @@ impl EnvironmentSet {
 
         // 前台窗口交互区：位置明显有效才启用，否则放到屏外。
         let valid = active.is_some_and(|a| a.area.left.abs() > 1 && a.area.top.abs() > 1);
+        // 本帧有效前台窗口的 uid；跨帧一致才计算边位移。
+        let mut active_uid = 0u64;
         match active {
             Some(info) if valid => {
                 let area = info.area;
+                active_uid = info.uid;
                 let prev = e.active_ie;
                 e.active_ie = DArea::new(
                     area.top as f64,
@@ -208,8 +226,9 @@ impl EnvironmentSet {
                     0.0,
                     0.0,
                 );
-                // 同一窗口的边位移：区分四条边各自的位移量。
-                if prev.visible() {
+                // 同一窗口（uid 一致）的边位移：区分四条边各自的位移量。
+                // 前台切换到另一个窗口时不带位移，直接替换交互区（对齐 C++）。
+                if prev.visible() && prev_active_uid == info.uid {
                     e.active_ie.set_edge_offsets(
                         area.left as f64 - prev.area.left,
                         area.right as f64 - prev.area.right,
@@ -272,6 +291,8 @@ impl EnvironmentSet {
         e.allows_breeding = allows_breeding;
         // 用户缩放：引擎把大数值视为更小的物理单位，故取倒数开方。
         e.set_scale(scale);
+
+        active_uid
     }
 
     /// 查找锚点所在屏幕的环境。
@@ -299,5 +320,147 @@ impl EnvironmentSet {
         if let Some(sandbox) = &self.sandbox {
             sandbox.borrow_mut().reset_scale();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen() -> ScreenInfo {
+        let rect = Rect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        ScreenInfo {
+            monitor: rect,
+            work_area: rect,
+            scale: 1.0,
+        }
+    }
+
+    fn active(uid: u64, left: i32, top: i32, right: i32, bottom: i32) -> ActiveWindowInfo {
+        ActiveWindowInfo {
+            handle: uid,
+            uid,
+            area: Rect {
+                left,
+                top,
+                right,
+                bottom,
+            },
+        }
+    }
+
+    /// 同一窗口（uid 一致）跨帧移动：计算边位移。
+    #[test]
+    fn edge_offsets_applied_for_same_window_uid() {
+        let env = Rc::new(RefCell::new(Environment::default()));
+        let cursor = Point::new(0, 0);
+        let uid = EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(7, 100, 100, 200, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            0,
+        );
+        assert_eq!(uid, 7);
+        // 首帧不出现位移（上一帧无有效窗口）。
+        assert_eq!(env.borrow().active_ie.dx, 0.0);
+
+        EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(7, 110, 100, 210, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            uid,
+        );
+        let e = env.borrow();
+        assert_eq!(e.active_ie.left_dx, 10.0);
+        assert_eq!(e.active_ie.right_dx, 10.0);
+        assert_eq!(e.active_ie.dx, 10.0);
+        assert_eq!(e.active_ie.dy, 0.0);
+    }
+
+    /// 前台切换到另一个窗口（uid 不同）：不带位移，直接替换交互区。
+    #[test]
+    fn edge_offsets_skipped_when_window_uid_changes() {
+        let env = Rc::new(RefCell::new(Environment::default()));
+        let cursor = Point::new(0, 0);
+        let uid = EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(7, 100, 100, 200, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            0,
+        );
+        EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(8, 110, 100, 210, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            uid,
+        );
+        let e = env.borrow();
+        // 交互区已替换为新窗口位置，但所有位移量为 0。
+        assert_eq!(e.active_ie.area.left, 110.0);
+        assert_eq!(e.active_ie.dx, 0.0);
+        assert_eq!(e.active_ie.dy, 0.0);
+        assert_eq!(e.active_ie.left_dx, 0.0);
+        assert_eq!(e.active_ie.right_dx, 0.0);
+    }
+
+    /// 前台窗口消失后重新出现：不沿用消失前的位移。
+    #[test]
+    fn edge_offsets_skipped_after_window_vanishes() {
+        let env = Rc::new(RefCell::new(Environment::default()));
+        let cursor = Point::new(0, 0);
+        let uid = EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(7, 100, 100, 200, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            0,
+        );
+        // 窗口消失一帧。
+        let gone =
+            EnvironmentSet::update_env(&env, &screen(), cursor, None, 1.0, 0.0, false, true, uid);
+        assert_eq!(gone, 0);
+        assert!(!env.borrow().active_ie.visible());
+        // 同一窗口重新出现并移动：上一帧不可见，无位移。
+        EnvironmentSet::update_env(
+            &env,
+            &screen(),
+            cursor,
+            Some(active(7, 110, 100, 210, 200)),
+            1.0,
+            0.0,
+            false,
+            true,
+            gone,
+        );
+        assert_eq!(env.borrow().active_ie.dx, 0.0);
     }
 }

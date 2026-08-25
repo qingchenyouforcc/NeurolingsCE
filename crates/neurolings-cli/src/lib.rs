@@ -13,11 +13,19 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 /// 经平台传输发送一行 IPC 请求并读取响应。
-pub fn ipc_transport_call(line: &str, timeout: Duration) -> Result<String, CliTransportError> {
-    neurolings_platform::ipc::ipc_client_call(
+///
+/// `connect_timeout` 仅覆盖连接与请求写入，`read_timeout` 覆盖响应读取，
+/// 与命令行的两个超时选项一一对应。
+pub fn ipc_transport_call(
+    line: &str,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> Result<String, CliTransportError> {
+    neurolings_platform::ipc::ipc_client_call_with_timeouts(
         neurolings_common::ipc::IPC_ENDPOINT,
         line,
-        timeout,
+        connect_timeout,
+        read_timeout,
         1024 * 1024,
     )
     .map_err(|e| CliTransportError(e.to_string()))

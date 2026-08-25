@@ -7,7 +7,7 @@ use std::path::Path;
 use neurolings_pack::{
     PackError, analyze_legacy_archive, extract_package, import_archive, inspect_package,
     install_package, validate_package, write_legacy_archive_selection_as_packages,
-    write_package_from_directory,
+    write_package_from_directory, write_package_from_memory,
 };
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../mascot_pack");
@@ -163,6 +163,31 @@ fn round_trip_write_then_install() {
     let metadata = inspect_package(&storage.join("RoundTrip.mascot")).unwrap();
     assert_eq!(metadata.name, "RoundTrip");
     assert_eq!(metadata.version, "1.0");
+}
+
+#[test]
+fn memory_package_rejects_invalid_png() {
+    let temp = tempfile::tempdir().unwrap();
+    let package_path = temp.path().join("InvalidImage.mascot");
+    let entries = vec![
+        (
+            "info.json".to_string(),
+            br#"{"name":"InvalidImage","version":"1.0"}"#.to_vec(),
+        ),
+        (
+            "actions.xml".to_string(),
+            b"<Mascot><ActionList/></Mascot>".to_vec(),
+        ),
+        (
+            "behaviors.xml".to_string(),
+            b"<Mascot><BehaviorList/></Mascot>".to_vec(),
+        ),
+        ("img/shime1.png".to_string(), b"not a png".to_vec()),
+    ];
+
+    let error = write_package_from_memory(&entries, &package_path).unwrap_err();
+    assert_eq!(error.to_string(), "Image img/shime1.png is not a valid PNG");
+    assert!(!package_path.exists());
 }
 
 #[test]

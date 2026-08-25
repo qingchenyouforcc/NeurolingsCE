@@ -53,13 +53,12 @@ impl IpcServerTransport {
     }
 
     /// 接受一个客户端并返回其连接句柄。
-    pub fn accept_client(&self) -> PlatformResult<IpcConnection> {
+    pub fn accept_client(&mut self) -> PlatformResult<IpcConnection> {
         #[cfg(windows)]
         {
-            self.pipe.accept()?;
-            Ok(IpcConnection {
-                handle: self.pipe.raw_handle(),
-            })
+            // 每次 accept 得到一个独立的管道实例句柄，由 IpcConnection 持有并关闭
+            let handle = self.pipe.accept()?;
+            Ok(IpcConnection { handle })
         }
         #[cfg(unix)]
         {
@@ -73,11 +72,27 @@ impl IpcServerTransport {
             })
         }
     }
+}
 
-    /// 标记当前连接已处理（Windows 管道断开即复位，无需处理）。
-    pub fn end_connection(&self) {
+pub struct IpcConnection {
+    #[cfg(windows)]
+    handle: windows::Win32::Foundation::HANDLE,
+    #[cfg(unix)]
+    stream: Option<std::os::unix::net::UnixStream>,
+}
+
+// Windows 的 HANDLE 非 Send；连接句柄由处理线程独占持有并负责关闭，
+// 服务端通过另建管道实例接受后续连接（见 pipe.rs PipeServer::accept）。
+unsafe impl Send for IpcConnection {}
+
+impl Drop for IpcConnection {
+    fn drop(&mut self) {
+        // Windows：连接独占管道实例句柄，处理完毕即关闭（替代原来的
+        // DisconnectNamedPipe 复位，使 accept 循环与连接处理可并行）。
         #[cfg(windows)]
-        self.pipe.end_connection();
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
+        }
     }
 }
 
@@ -90,18 +105,16 @@ impl Drop for IpcServerTransport {
     }
 }
 
-pub struct IpcConnection {
-    #[cfg(windows)]
-    handle: windows::Win32::Foundation::HANDLE,
-    #[cfg(unix)]
-    stream: Option<std::os::unix::net::UnixStream>,
-}
+/// 服务端读单条请求的总超时为 2000ms
+/// （ShijimaLocalApi.cc:122 readMessage 的 2000ms）。
+#[cfg(windows)]
+const IPC_READ_TIMEOUT: Duration = Duration::from_millis(2000);
 
 impl IpcConnection {
     pub fn read_line(&mut self, max_bytes: usize) -> PlatformResult<Option<String>> {
         #[cfg(windows)]
         {
-            crate::pipe::read_handle_line(self.handle, max_bytes)
+            crate::pipe::read_handle_line(self.handle, max_bytes, IPC_READ_TIMEOUT)
         }
         #[cfg(unix)]
         {
@@ -167,22 +180,39 @@ impl IpcConnection {
     }
 }
 
-/// 客户端一次性请求/响应。
+/// 客户端一次性请求/响应，连接和读取共用同一超时。
 pub fn ipc_client_call(
     endpoint: &str,
     request_line: &str,
     timeout: Duration,
     max_bytes: usize,
 ) -> PlatformResult<String> {
+    ipc_client_call_with_timeouts(endpoint, request_line, timeout, timeout, max_bytes)
+}
+
+/// 客户端一次性请求/响应，分别限制连接与读取阶段。
+pub fn ipc_client_call_with_timeouts(
+    endpoint: &str,
+    request_line: &str,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    max_bytes: usize,
+) -> PlatformResult<String> {
     #[cfg(windows)]
     {
-        crate::pipe::pipe_client_call(endpoint, request_line, timeout, max_bytes)
+        crate::pipe::pipe_client_call_with_timeouts(
+            endpoint,
+            request_line,
+            connect_timeout,
+            read_timeout,
+            max_bytes,
+        )
     }
     #[cfg(unix)]
     {
         use std::io::{Read, Write};
         let path = unix_socket_path(endpoint);
-        let deadline = std::time::Instant::now() + timeout;
+        let deadline = std::time::Instant::now() + connect_timeout;
         let mut stream = loop {
             match std::os::unix::net::UnixStream::connect(&path) {
                 Ok(s) => break s,
@@ -196,12 +226,20 @@ pub fn ipc_client_call(
                 }
             }
         };
-        stream.set_read_timeout(Some(timeout)).ok();
+        if !connect_timeout.is_zero() {
+            stream.set_write_timeout(Some(connect_timeout)).ok();
+        }
         let mut payload = request_line.as_bytes().to_vec();
         payload.push(b'\n');
         stream
             .write_all(&payload)
             .map_err(|e| crate::PlatformError::Win32(format!("write: {e}")))?;
+        let nonblocking_read = read_timeout.is_zero();
+        if nonblocking_read {
+            stream.set_nonblocking(true).ok();
+        } else {
+            stream.set_read_timeout(Some(read_timeout)).ok();
+        }
         let mut buffer = Vec::new();
         let mut byte = [0u8; 1];
         loop {
@@ -221,6 +259,11 @@ pub fn ipc_client_call(
                             "IPC message exceeds the maximum size".into(),
                         ));
                     }
+                }
+                Err(e) if nonblocking_read && e.kind() == std::io::ErrorKind::WouldBlock => {
+                    return Err(crate::PlatformError::Win32(
+                        "Timed out waiting for IPC response".into(),
+                    ));
                 }
                 Err(e) => {
                     return Err(crate::PlatformError::Win32(format!(

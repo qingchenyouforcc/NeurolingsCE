@@ -24,8 +24,9 @@ class _Candidate {
 
   final Map<String, dynamic> raw;
   bool selected = false;
-  late final TextEditingController infoController =
-      TextEditingController(text: raw['info_json'] as String? ?? '');
+  late final TextEditingController infoController = TextEditingController(
+    text: raw['info_json'] as String? ?? '',
+  );
   Timer? _debounce;
   String validation = '';
   bool get convertible => raw['convertible'] == true;
@@ -146,8 +147,9 @@ class _CreatePageState extends State<CreatePage> {
 
   Future<void> _generate() async {
     final l10n = AppLocalizations.of(context);
-    final selected =
-        _candidates.where((c) => c.selected && c.convertible).toList();
+    final selected = _candidates
+        .where((c) => c.selected && c.convertible)
+        .toList();
     if (selected.isEmpty || _outputDir == null) return;
     setState(() {
       _converting = true;
@@ -156,10 +158,7 @@ class _CreatePageState extends State<CreatePage> {
     try {
       final state = context.read<AppState>();
       final selections = selected
-          .map((c) => {
-                'name': c.name,
-                'info_json': c.infoController.text,
-              })
+          .map((c) => {'name': c.name, 'info_json': c.infoController.text})
           .toList();
       final result = await state.api.command({
         'command': 'convert_archive',
@@ -182,7 +181,8 @@ class _CreatePageState extends State<CreatePage> {
         }
       }
       lines.add(
-          l10n.createConvertedCount((result['created'] as num?)?.toInt() ?? 0));
+        l10n.createConvertedCount((result['created'] as num?)?.toInt() ?? 0),
+      );
       setState(() => _resultText = lines.join('\n'));
     } catch (e) {
       if (!mounted) return;
@@ -208,37 +208,45 @@ class _CreatePageState extends State<CreatePage> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text(l10n.createHint,
-              style: FluentTheme.of(context).typography.caption),
+          child: Text(
+            l10n.createHint,
+            style: FluentTheme.of(context).typography.caption,
+          ),
         ),
         const SizedBox(height: 12),
         _stepCard(
           context,
           index: 1,
           title: l10n.createStep1,
-          child: Row(children: [
-            Expanded(
-              child: TextBox(
-                readOnly: true,
-                placeholder: l10n.createChooseZip,
-                controller: TextEditingController(text: _archivePath ?? ''),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextBox(
+                  readOnly: true,
+                  placeholder: l10n.createChooseZip,
+                  controller: TextEditingController(text: _archivePath ?? ''),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: _analyzing ? null : _chooseArchive,
-              child: Text(l10n.createChooseZip),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed:
-                  _analyzing || _archivePath == null ? null : _checkContent,
-              child: _analyzing
-                  ? const SizedBox(
-                      width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
-                  : Text(l10n.createCheckContent),
-            ),
-          ]),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: _analyzing ? null : _chooseArchive,
+                child: Text(l10n.createChooseZip),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _analyzing || _archivePath == null
+                    ? null
+                    : _checkContent,
+                child: _analyzing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
+                    : Text(l10n.createCheckContent),
+              ),
+            ],
+          ),
         ),
         if (_error != null)
           Padding(
@@ -271,30 +279,36 @@ class _CreatePageState extends State<CreatePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(children: [
-                Expanded(
-                  child: TextBox(
-                    readOnly: true,
-                    placeholder: l10n.createChooseFolder,
-                    controller: TextEditingController(text: _outputDir ?? ''),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextBox(
+                      readOnly: true,
+                      placeholder: l10n.createChooseFolder,
+                      controller: TextEditingController(text: _outputDir ?? ''),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Button(
-                  onPressed: _chooseFolder,
-                  child: Text(l10n.createChooseFolder),
-                ),
-              ]),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: _chooseFolder,
+                    child: Text(l10n.createChooseFolder),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
               FilledButton(
-                onPressed: _converting ||
+                onPressed:
+                    _converting ||
                         _outputDir == null ||
                         !_candidates.any((c) => c.selected && c.convertible)
                     ? null
                     : _generate,
                 child: _converting
                     ? const SizedBox(
-                        width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                        width: 14,
+                        height: 14,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
                     : Text(l10n.createGenerate),
               ),
               if (_resultText.isNotEmpty) ...[
@@ -312,8 +326,12 @@ class _CreatePageState extends State<CreatePage> {
     );
   }
 
-  Widget _stepCard(BuildContext context,
-      {required int index, required String title, required Widget child}) {
+  Widget _stepCard(
+    BuildContext context, {
+    required int index,
+    required String title,
+    required Widget child,
+  }) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Padding(
@@ -321,11 +339,18 @@ class _CreatePageState extends State<CreatePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(children: [
-              Text('$index. ',
-                  style: FluentTheme.of(context).typography.bodyStrong),
-              Text(title, style: FluentTheme.of(context).typography.bodyStrong),
-            ]),
+            Row(
+              children: [
+                Text(
+                  '$index. ',
+                  style: FluentTheme.of(context).typography.bodyStrong,
+                ),
+                Text(
+                  title,
+                  style: FluentTheme.of(context).typography.bodyStrong,
+                ),
+              ],
+            ),
             const SizedBox(height: 10),
             child,
           ],
@@ -345,39 +370,43 @@ class _CreatePageState extends State<CreatePage> {
       ..write(candidate.raw['author'] ?? '');
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
         borderRadius: BorderRadius.circular(7),
       ),
       padding: const EdgeInsets.all(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Checkbox(
-              checked: candidate.selected,
-              onChanged: candidate.convertible
-                  ? (v) => setState(() => candidate.selected = v ?? false)
-                  : null,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Tooltip(
-                message: tooltip.toString(),
-                child: Text(
-                  candidate.name +
-                      (candidate.convertible
-                          ? ''
-                          : '  (${l10n.createNotConvertible})'),
-                  style: FluentTheme.of(context).typography.bodyStrong,
+          Row(
+            children: [
+              Checkbox(
+                checked: candidate.selected,
+                onChanged: candidate.convertible
+                    ? (v) => setState(() => candidate.selected = v ?? false)
+                    : null,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: tooltip.toString(),
+                  child: Text(
+                    candidate.name +
+                        (candidate.convertible
+                            ? ''
+                            : '  (${l10n.createNotConvertible})'),
+                    style: FluentTheme.of(context).typography.bodyStrong,
+                  ),
                 ),
               ),
-            ),
-          ]),
+            ],
+          ),
           if (warnings.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(warnings.join('; '),
-                  style: FluentTheme.of(context).typography.caption),
+              child: Text(
+                warnings.join('; '),
+                style: FluentTheme.of(context).typography.caption,
+              ),
             ),
           if (candidate.convertible) ...[
             const SizedBox(height: 8),
@@ -388,9 +417,9 @@ class _CreatePageState extends State<CreatePage> {
                 controller: candidate.infoController,
                 onChanged: (_) => _validateDebounced(candidate),
                 style: FluentTheme.of(context).typography.body?.copyWith(
-                      fontFamily: 'Consolas, monospace',
-                      fontSize: 12,
-                    ),
+                  fontFamily: 'Consolas, monospace',
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 4),

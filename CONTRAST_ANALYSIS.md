@@ -1,587 +1,158 @@
-# 新旧实现对比与对齐状态（2026-08-23 更新）
-
-> 本文件早前版本（2026-08-21）所列的占位项已全部落地；以下为**当前**对齐状态。
-> 对齐基准仍为 CE v0.5.3（C++/Qt）；协议契约（CLI/IPC/HTTP/包格式）以 CE 源码为准。
-
-## 已完成对齐（此前差异已修复）
-
-- 版本号统一 0.5.3（workspace + About + CLI --version）。
-- CE 注册表数据无缝迁移：设置（HKCU\Software\pixelomer\Shijima-Qt → settings.json）、
-  组合（combinations/saved、lastBeforeClose → combinations.json）、GitHub 凭据（NeurolingsCE-GitHub）。
-- restoreCombinationMode 值域统一 none/last/saved+Id；组合以 epoch 毫秒 id 追加存储。
-- 单实例三段逻辑（startup 静默 / 普通弹管理器 / 竞态兜底）；CLI 默认超时对齐 500/500ms。
-- 默认模板内嵌虚拟化 @（不落盘、不可删、预览与帧走内嵌资源）；旧落盘 Default 自动清理。
-- 托盘：应用 ico 图标、Locale 双语（对齐 zh_CN.ts 译文）、左键/菜单切换现实窗口、
-  Show/Hide 按可见性取词、macOS NSStatusItem（交叉编译验证）。
-- 召唤落点跟随 Manager 所在屏（心跳上报）；Math.random 与引擎同源真随机。
-- 右键菜单四项中文对齐官方译文（召唤同伴/检查/只保留一个/全部清除）。
-- Codex：气泡队列 8/去重 60s-64/点击跳转 Codex 页/标题本地化/Markdown 标记剥离；
-  app-server 全流程（initialize/thread/turn/审批四决策/plan/user-input 问答，协议对齐 CE）。
-- 更新器整链：启动 1500ms 自动检查、ignore/remind（1 天）、下载 SHA-256 校验、
-  代理（system/direct/http/socks5）、安装器启动与退出；发现新版跳转 About 页。
-- Manager：标题/禁最大化/关闭行为（有桌宠隐藏、无桌宠确认退出）、状态栏、
-  Home 库语义（预览/详情/多选删除/Enter 与双击）、Create 三步转换器（zip→.mascot，
-  含 info.json 编辑器）、Settings 全行（Updates/代理/取色/语言即时生效）、
-  Store GitHub Device Flow 登录与投稿 UI、About 完整更新流与许可对话框、
-  l10n 全量双语（en/zh）、私有管理端口 32457（公开 API 契约不变）。
-- 会话日志对齐 AppLog（log/日期目录/行格式/级别环境变量）。
-- rar/7z/tar/tgz 导入补齐（解压到受控临时目录后统一分析/校验）。
-- 捆绑 agent 技能（neurolingsce-skill + companion）启动同步安装（15s 超时）。
-- Linux 自启收敛为 CE 的 Windows-only 语义。
-
-## 仍遗留（需维护者/真机）
-
-- Linux/macOS 需真机视觉验证（气泡在非 Windows 平台仍为占位；Linux 托盘占位）。
-- 投稿服务端、GitHub App、Pages 部署（客户端与 UI 已就绪）。
-- MSI 签名（WiX）发布流水线；CI golden diff 逐 tick 对比（需 Qt6/MSVC 环境）。
-- ElaWidgetTools 与 Fluent 控件外观存在像素级差异（语义/布局/交互已对齐）。
-- .opus 音频可导入但无解码器（rodio/symphonia 未含 opus）；HTTP 并发模型为每连接一线程。
-
----
-# NeurolingsCE (C++) vs Neurolings-rs 详细对比分析报告
-
-**分析时间**: 2026-08-21  
-**源版本**: v0.5.3 (Qt 6.8, C++17)  
-**目标版本**: Rust + Flutter (M0-M9 完成状态)
-
----
-
-## 📊 总体评价
-
-**功能对齐度**: **~95%**
-
-✅ **核心功能完整**: CLI/HTTP API/引擎/渲染窗口等关键路径已完全实现  
-⚠️ **UI 占位符**: Store/Codex 页面仍为占位，需服务端联调  
-🔧 **平台差异**: macOS/Linux 需真机验证
-
----
-
-## ✅ 已完全对齐的项目 (100%)
-
-### 1. CLI 命令行契约 (`docs/contracts/cli-contract.md`)
-
-| 命令 | C++ 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| `--version/--help` | ✓ | ✓ (`cli/src/main.rs`) | ✅ |
-| `--list/--summon/--close` | ✓ | ✓ (`services.rs` M4 完成) | ✅ |
-| `--stop` | ✓ | ✓ (自动启动语义保留) | ✅ |
-| `--mascot list/add/remove/validate` | ✓ | ✓ (`neurolings-pack` + cli) | ✅ |
-| 退出码 `0/1/2` | ✓ | ✓ (业务错误/配置错误) | ✅ |
-| JSON compact 输出 | ✓ | ✓ (`common::json::to_compact_string`) | ✅ |
-| `--codex-notify` | ✓ | ✓ → IPC → bubble | ✅ |
-| 拒绝 `--host/--port` | ✓ | ✓ (code=2) | ✅ |
-| IPC 端点名 | ✓ | ✓ (`io.github.qingchenyouforcc.NeurolingsCE.cli`) | ✅ |
-
-**测试证据**:
-```bash
-cargo build --release
-./target/release/neurolingsce-cli --json --version
-./target/release/neurolingsce-cli --json --mascot validate <path>
-```
-
-### 2. HTTP API v1 (`docs/HTTP-API.md`)
-
-| 端点 | C++ 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| `GET /ping` | ✓ | ✓ (`http.rs:204`) | ✅ |
-| `GET /mascots[?selector=]` | ✓ | ✓ (JS selector 支持) | ✅ |
-| `POST /mascots` | ✓ | ✓ (name+data_id 互斥校验) | ✅ |
-| `DELETE /mascots[?selector=]` | ✓ | ✓ (批量关闭) | ✅ |
-| `GET /mascots/:id` | ✓ | ✓ | ✅ |
-| `PUT /mascots/:id` | ✓ | ✓ (patch 更新) | ✅ |
-| `DELETE /mascots/:id` | ✓ | ✓ (单只关闭) | ✅ |
-| `GET /loadedMascots` | ✓ | ✓ (模板列表) | ✅ |
-| `GET /loadedMascots/:id` | ✓ | ✓ (单个模板 info) | ✅ |
-| `GET /loadedMascots/:id/preview.png` | ✓ | ✓ (base64 PNG) | ✅ |
-| `GET /cli/labels/:label` | ✓ | ✓ (CLI 标签查询) | ✅ |
-| `POST /cli/labels` | ✓ | ✓ (注册 CLI 标签) | ✅ |
-| `POST /command` | ✓ | ✓ (运行时透传) | ✅ |
-| 未知路由 400 | ✓ | ✓ (`bad_request()` 统一处理) | ✅ |
-| Content-Type 校验 | ✓ | ✓ (`application/json` 强制) | ✅ |
-
-**代码位置**: `crates/neurolings-runtime/src/http.rs` (全量实现)
-
-### 3. Shimeji 行为引擎 (`neurolings-engine`)
-
-| 模块 | C++ 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| XML Parser | rapidxml | roxmltree/quick-xml | ✅ |
-| 22 种 Action | walk/fall/jump/breed/dragged/interact/transform/sequence/select/scanmove... | 全量移植 | ✅ |
-| Behavior Manager | 频率/条件检测 | ticks_per_second + condition check | ✅ |
-| Physics | gravity/floor/ceiling | 同左 (环境参数化) | ✅ |
-| Environment | multi-screen work area | `_NET_WORKAREA` + QScreen 枚举 | ✅ |
-| Tick 模型 | 40ms base + subtick | 保持 40ms + determinism | ✅ |
-| QuickJS 脚本 | duktape 上下文 | QuickJS-rs + 100ms yield | ✅ |
-| Deterministic RNG | 固定种子 Math.random | 确定性包装器 | ✅ |
-
-**Golden Test**: 43 项测试含逐 tick 重放
-
-### 4. 包格式 `.mascot` (`neurolings-pack`)
-
-| 结构 | C++ | Rust | 状态 |
-|------|-----|------|------|
-| `info.json` | name/version/description/license | serde 序列 | ✅ |
-| `actions.xml` | 22 action 定义 | 同左 | ✅ |
-| `behaviors.xml` | behavior 规则集 | 同左 | ✅ |
-| `img/*.png` | sprite 帧序列 | SafePath 校验 | ✅ |
-| `sound/*.wav` | 音效文件 | rodio 播放 | ✅ |
-| `bubble_context.txt` | 气泡文案模板 | 加载校验 | ✅ |
-| Legacy Zip Import | libshimejifinder | 复用逻辑 | ✅ |
-| Validate CLI | `--mascot validate` | exit code 0/1/2 | ✅ |
-
-### 5. 数据持久化
-
-| 类型 | Windows | Linux | macOS | Rust 实现 |
-|------|---------|-------|-------|----------|
-| Mascot 模板 | `%LOCALAPPDATA%\NeurolingsCE\mascots` | `~/.local/share/NeurolingsCE/mascots` | `~/Library/Application Support/NeurolingsCE` | ✅ `QStandardLocations::AppLocalDataLocation` 等价物 |
-| combinations.json | 同左 | 同左 | 同左 | ✅ 原子读写 (临时文件重命名) |
-| settings.json | 同左 | 同左 | 同左 | ✅ JSON key-value map |
-| mascot-cache | 同级缓存 | 同左 | 同左 | ✅ |
-| 日志 | `%LOCALAPPDATA%\NeurolingsCE\log/YYYY-MM-DD/` | `~/.local/share/NeurolingsCE/log/` | 同左 | ⚠️ 待验证 |
-
-### 6. 桌面启动与自启 (`settings.rs` + `autostart.rs`)
-
-| 功能 | Qt 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| `KEY_STARTUP_SILENT` | Run 键静默启动 | `neurolings_platform::autostart::set_autostart` | ✅ |
-| `KEY_STARTUP_COMBO_MODE` | restoreCombinationMode | 同左 (组合 ID 模式) | ✅ |
-| `KEY_STARTUP_COMBO_ID` | restoreCombinationId | 同左 | ✅ |
-| XDG autostart | .desktop 文件 | Linux X11 同左 | ✅ |
-| IPC 命令 | set/get_autostart | services.rs (#934) | ✅ |
-
-### 7. 桌宠组合 (`combinations.rs`)
-
-| 操作 | Qt 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| SaveCombo | 保存当前屏幕桌宠组 | combinations.json atomic write | ✅ |
-| RestoreCombo | 清场重建 | dismiss_all + spawn sequence | ✅ |
-| ListCombos | combinations.json list | serde 序列化 | ✅ |
-| DeleteCombo | 删除 combo | remove + save | ✅ |
-
-**E2E 测试**:
-```rust
-// 召唤 Default → SaveCombo("test") → Spawn Jenny → List = ["test"] → Restore → Count == 2
-```
-
-### 8. Codex 集成 (`codex.rs`)
-
-| 特性 | Qt 原版 | Rust 版本 | 状态 |
-|------|---------|----------|------|
-| config.toml block | ~/.codex/config.toml install/uninstall | neurolings-store::config | ✅ |
-| `--codex-notify` | IPC → bubble | neurolings_platform::bubble::show_bubble | ✅ |
-| Key binding | `KEY_CODEX_ENABLED` | settings get_bool(KEY_CODEX_ENABLED) | ✅ |
-| Companion Template | `KEY_CODEX_TEMPLATE` | neurolings-engine template 匹配 | ✅ |
-
-### 9. 窗口模式 (`services.rs:968`)
-
-| 指令 | Qt | Rust | 状态 |
-|------|----|------|------|
-| `set_window_mode` | sandbox env | payload: {enabled, width, height} | ✅ |
-| 沙盒合成 | winit canvas | CPU render → softbuffer | ✅ |
-
-### 10. 三平台窗口后端 (`neurolings-platform`)
-
-| 平台 | 技术栈 | 透明窗口 | 命中穿透 | 置顶 | 多显示器 |
-|------|--------|---------|---------|------|---------|
-| Windows | windows-rs + WTL | WS_EX_LAYERED + UpdateLayeredWindow | ✅ BGRA alpha test | _NET_WM_STATE_ABOVE | Win32 EnumDisplayDevices |
-| Linux X11 | x11rb | ARGB visual + XRender | XFixes input-shape | ✅ | _NET_WORKAREA |
-| macOS | objc2 + core-graphics | NSView + hitTest | ✅ pixel alpha | NSWindow level above | NSScreen screens |
-
-**交叉编译**: `rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin` 全部通过
-
----
-
-## ⚠️ 部分实现或待完善的项目
-
-### 1. **商店系统** (GitHub OAuth / Index) - P0 优先
-
-**现状**:
-- ✅ `neurolings-store::index.rs`: 索引解析/ETag/Last-Modified/语义化版本比较
-- ✅ `neurolings-store::github.rs`: Device Flow (device_code 轮询/凭据存储 keyring)
-- ✅ `neurolings-store::submission.rs`: 两阶段 HMAC 会话 + multipart 上传
-- ✅ `neurolings-store::updater.rs`: updater-schema 校验 + SHA-256 下载验证
-- ❌ **Flutter Store Page**: PlaceholderPage（需接线）
-
-**待完成**:
-```dart
-// manager/lib/pages/store_page.dart (不存在)
-// 替换 PlaceholderPage → MascotStoreUi 组件树
-// 调用 AppState.store.query()/install()
-// GitHub OAuth 弹窗流程 UI
-```
-
-**服务端依赖**: Python 商店服务 (staging/prod) 仍需维护者部署
-
-### 2. **Codex 页面** - P0 优先
-
-**现状**:
-- ✅ Codex CLI 命令 + Bubble 显示 (`codex.rs` + `runtime/bubbles.rs`)
-- ✅ config.toml 管理块安装/卸载
-- ❌ **Flutter Codex Page**: PlaceholderPage（需接线）
-
-**待完成**:
-```dart
-// manager/lib/pages/codex_page.dart (不存在)
-// 展示 Codex 状态 (enabled/disabled)
-// toggle 按钮 → IPC codex enable/disable
-// Companion Mascot 选择器 (load templates dropdown)
-// Session History Viewer (JSON-RPC 调用记录)
-```
-
-### 3. **Tray Icon Menu** - P1 用户体验
-
-**现状**:
-- ✅ `tray.rs` stub 存在但功能未完整暴露给 Flutter
-- ❌ Flutter 侧缺少托盘图标 + 右键菜单
-
-**建议实现**:
-```rust
-// crates/neurolings-platform/src/tray.rs (Windows/macOS/Linux full impl)
-pub fn create_tray(window_handle: usize) -> TrayHandle {
-    // Windows: tray-icon crate + WM_USER 菜单
-    // Linux:ayatana-appindicator
-    // macOS:NSStatusItem
-}
-```
-
-**Flutter 侧**:
-```dart
-// lib/widgets/tray_menu.dart
-// 刷新 | 设置 | 关于 | 退出
-```
-
-### 4. **Licensing Dialog** - P1
-
-**现状**:
-- ❌ Qt 原版 License Dialog 未在 Rust 版本重现
-
-**建议实现**:
-- 收集所有 crates.io LICENSE 文件
-- `flutter_l10n` 国际化（en/zh）
-- AboutPage 增加"开源许可"标签页
-
-### 5. **Inspector Panel** - P1/P2
-
-**现状**:
-- ✅ `inspector.rs` (session engine state inspection)
-- ❌ Flutter UI 无 Inspector 面板
-
-**建议实现**:
-```dart
-// lib/pages/inspector_page.dart
-// 实时显示 session.engine.state
-// anchor/behavior/broadcast 监控表
-// 手动触发事件 (spawn/close/test action)
-```
-
-### 6. **跨平台真机验证** - 依赖硬件资源
-
-| 模块 | Windows | Linux X11 | macOS | Wayland |
-|------|---------|-----------|-------|---------|
-| Bubble rendering | ✅ GDI 双 DC | ⚠️ x11rb show_bubble 未真机 | ⚠️ macos::bubble_bridge 占位符 | ❌ fallback 策略文档标注 |
-| Tray icon | ✅ tray-icon | ⚠️ ayatana 需 Debian/Ubuntu | ⚠️ menu bar 需调试 | N/A |
-| Window mode | ✅ sandbox render | ⚠️ layer-shell 降级需验证 | ❌ untested | ❌ experimental |
-
-**真机测试 checklist**:
-```bash
-# Linux
-cargo test --features x11-test show_bubble
-sudo apt install ayatana-appindicator3-0.4
-
-# macOS
-export TARGET=aarch64-apple-darwin
-cargo build --release --target $TARGET
-
-# Wayland
-export GTK_IM_MODULE=fcitx
-./target/release/neurolingsce
-```
-
-### 7. **音频延迟测试** - P2 优化
-
-**现状**:
-- ✅ rodio crate wav 播放
-- ⚠️ GUI 线程同步 (Qt) → Async stream (Rust) 可能引入 <30ms 延迟
-
-**建议测试**:
-```rust
-#[test]
-fn audio_latency_under_30ms() {
-    let start = Instant::now();
-    rodio::Decoder::new(file).play_detached().unwrap();
-    assert!(start.elapsed().as_micros() < 30_000);
-}
-```
-
----
-
-## 🔍 细节差异分析
-
-### 1. **主窗口管理**
-
-**Qt 原版**:
-```cpp
-ShijimaManager ( QMainWindow )
-├── Menu Bar (File/Edit/Tools/Help)
-├── Toolbar (Spawn/Close/Search)
-└── CentralWidget (Pages + Stack)
-```
-
-**Rust 版本**:
-```
-Flutter Manager (独立窗口，FluentApp)
-└── NavigationPane (7 pages)
-    ├── Home
-    ├── Create
-    ├── Store (placeholder)
-    ├── Combinations
-    ├── Codex (placeholder)
-    ├── Settings
-    └── About
-```
-
-**差异影响**:
-- ✅ **用户感知**: Fluent Design vs Qt Widgets (主题风格不同但布局一致)
-- ✅ **功能对齐**: 七页导航覆盖主窗口所有功能
-- ⚠️ **细微差异**: 菜单快捷键/工具栏快捷方式需重新映射
-
-### 2. **HTTP 服务架构**
-
-**Qt 原版**: cpp-httplib (async 回调式)
-```cpp
-httplib::Server srv;
-srv.Get("/ping", [](const Request&, Response& res) {...});
-srv.listen(host, port);
-```
-
-**Rust 版本**: 阻塞式 handler (单线程每连接)
-```rust
-for stream in listener.incoming() {
-    std::thread::spawn(move || handle_connection(stream));
-}
-```
-
-**优劣分析**:
-- ✅ **简化实现**: 阻塞模型更容易保证正确性
-- ⚠️ **性能瓶颈**: 高并发下线程爆炸（正常桌宠场景不影响）
-- 🔧 **建议**: v1.1 迁移至 `axum` (tokio async model)
-
-### 3. **日志路径**
-
-**Qt 原版**:
-```powershell
-# Windows
-%LOCALAPPDATA%\NeurolingsCE\log\YYYY-MM-DD\neurolingsce-HH-mm-ss-zzz.log
-# Linux/macOS
-QStandardLocations::AppLocalDataLocation/log
-fallback: ~/.neurolingsce/log
-```
-
-**Rust 版本**: 
-```rust
-// crates/neurolings-common/src/logger.rs
-pub fn init_logging() -> Result<PathBuf, String> {
-    let log_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("NeurolingsCE")
-        .join("log")
-        .join(date_str());
-    
-    fs::create_dir_all(&log_dir)?;
-    Ok(log_dir.join(format!("neurolingsce-{}.log", timestamp())))
-}
-```
-
-**差异检查**:
-- ✅ Windows: `dirs::windows::LOCALAPPDATA` → `C:\Users\<user>\AppData\Local` ✅
-- ⚠️ Linux: `dirs::home_dir()` → `~/.config` ❌ **原标准是 `~/.local/share`**
-
-**修复建议**:
-```rust
-let data_dir = dirs::data_dir() // ~/.local/share
-    .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")));
-```
-
-### 4. **i18n 文件位置**
-
-**Qt 原版**: `translations/neurolingsce_en.ts`, `translations/neurolingsce_zh_CN.ts`
-**Rust 版本**: `manager/lib/l10n/app_localizations_en.dart`, `app_localizations_zh.dart`
-
-**翻译方式差异**:
-- Qt: `.ts` → `lrelease` → `.qm` (binary)
-- Flutter: `.arb` → `flutter gen-l10n` → `app_localizations*.dart`
-
-**对齐检查**:
-```dart
-// app_localizations_zh.dart
-class AppLocalizationsZh {
-  String get navHome => '主页';
-  String get navCreate => '制作';
-  // ... all 7 page labels match Qt version
-}
-```
-
-✅ **已全部对照 C++ OutputFormatter 导出文本案**
-
----
-
-## 🎯 改进优先级建议
-
-### **P0 - M7/M8 前必须完成**
-
-1. **Flutter Store Page** (Week 1-2)
-   ```dart
-   manager/lib/pages/store_page.dart
-   - FetchStoreIndex useFuture
-   - MascotCard (thumbnail/name/version/description)
-   - InstallButton (download→sha256→install)
-   - GitHubLoginButton (oauth flow → token stored)
-   ```
-
-2. **Flutter Codex Page** (Week 1)
-   ```dart
-   manager/lib/pages/codex_page.dart
-   - Toggle enabled/disabled
-   - Companion Mascot dropdown (load from templates)
-   - Status indicator (connected/disconnected)
-   ```
-
-3. **Bubble 跨平台真机验证** (Week 1)
-   - Linux X11: `cargo test --features x11-test`
-   - macOS: Rosetta + 真机双测
-   - Windows: 逐帧对比 Qt 原版
-
-### **P1 - v1.0 发布候选前**
-
-4. **Tray Icon Menu** (Week 2-3)
-   - Win32/Native APIs
-   - Unity/KDE/GNOME integration
-   - Context menu items (Refresh/Settings/About/Exit)
-
-5. **Licensing Dialog** (Week 1)
-   - Collect LICENSE files from Cargo.lock
-   - Generate flutter_l10n strings
-   - Add "Open Source Licenses" tab to AboutPage
-
-6. **Inspector Panel MVP** (Week 2)
-   - Session table (id/name/template/state)
-   - Real-time behavior/anchor display
-   - Manual event injection buttons
-
-### **P2 - v1.1+ 技术债清理**
-
-7. **HTTP Service Modernization** (Month 1)
-   ```rust
-   // Replace blocking service with axum
-   #[tokio::main]
-   async fn serve(tx: Sender<PendingCommand>) {
-       let router = Router::new()
-           .route("/ping", get(ping))
-           .route("/mascots", post(spawn_mascot)...);
-       axum::serve(listener, router.into_make_service()).await;
-   }
-   ```
-
-8. **CI Golden Diff Pipeline** (Month 1)
-   ```yaml
-   # .github/workflows/golden-diff.yml
-   - Uses: Setup-Cpp-Qt6
-   - Build: NeurolingsCE v0.5.3
-   - Export golden output: ./NeurolingsCE-cli --json --list > golden-list.json
-   - Compare: rust output vs golden
-   ```
-
-9. **MSI Sign & Publish** (Month 2)
-   ```powershell
-   # packaging/package-windows.ps1
-   - Invoke-WixBuildMSI
-   - signtool sign /fd SHA256 /a neurolingsce.msi
-   - Upload to GitHub Release + Sigstore
-   ```
-
----
-
-## 📈 用户感知差异预测表
-
-| 用户类型 | 预期体验 | Rust 实际体验 | 差异率 |
-|---------|---------|--------------|-------|
-| CLI 自动化用户 | JSON output + exit codes | Exact same | **0%** |
-| HTTP API 调用方 | REST endpoints | 100% compatible | **0%** |
-| 普通 GUI 用户 | Summon/Close/Combine | Fluent UI + same flow | **~5%** (视觉主题差异) |
-| 高级用户 | Codex/Combos/Autostart | All features present | **~3%** (missing panels) |
-| 开发者 | Engine logic | Golden-state tested | **~2%** (need true-machine validation) |
-
----
-
-## ✅ 可发布性评估
-
-| 维度 | 要求 | Rust 版本 | 状态 |
-|------|------|----------|------|
-| CLI Contract | Exit code + JSON format | ✅ Tested golden output | ✅ Pass |
-| HTTP API | All v1 routes working | ✅ http.rs full implementation | ✅ Pass |
-| Core Engine | 22 actions + physics | ✅ 43 unit tests green | ✅ Pass |
-| Cross-platform | Build Windows + Linux + macOS | ✅ cargo check all targets | ✅ Warn (no real machine) |
-| UI Pages | 7 navigation items | ⚠️ 2 placeholders (Store/Codex) | ⚠️ Conditional |
-| Data Persistence | Mascot/Setting/Combo paths | ✅ Dir struct alignment | ✅ Pass |
-| Autostart/Restore | Silent launch + combo recovery | ✅ IPC service commands | ✅ Pass |
-| Bundle Size | <50MB MSI | Pending | ⏳ TBD |
-
-**发布决策**:
-- **v1.0 RC**: Can release after Store/Codex pages wired OR hide behind feature flags
-- **v1.0 GA**: Recommended after Tray/Licensing/Inspector panels added
-- **True Machine Validation**: Required for macOS/Linux certification
-
----
-
-## 📝 下一步行动清单
-
-### 立即开始 (Week 1-2)
-
-- [ ] Implement `manager/lib/pages/store_page.dart`
-- [ ] Implement `manager/lib/pages/codex_page.dart`
-- [ ] Linux X11 bubble integration test
-- [ ] Fix logs directory path (`~/.local/share` not `~/.config`)
-
-### 短期优化 (Month 1)
-
-- [ ] Add tray icon context menu
-- [ ] Generate and integrate Open Source Licenses page
-- [ ] Implement basic Inspector panel
-- [ ] Benchmark audio latency with rodio
-
-### 中期提升 (Month 2-3)
-
-- [ ] Migrate HTTP service to axum
-- [ ] Set up CI golden diff pipeline
-- [ ] Code signing + notarization workflow
-- [ ] Documentation site generation
-
-### 长期规划 (Quarter 2+)
-
-- [ ] Wayland native support (layer-shell + compositor negotiation)
-- [ ] Plugin system for custom actions
-- [ ] Web-based dashboard alternative
-- [ ] Mobile companion app (iOS/Android)
-
----
-
-## 🔗 参考文档
-
-1. **旧版文档**: 
-   - `E:/Projects/NeurolingsCE/src/app/README.md`
-   - `E:/Projects/NeurolingsCE/docs/HTTP-API.md`
-   - `E:/Projects/NeurolingsCE/src/app/cli/README.md`
-
-2. **新版本档**:
-   - `E:/Projects/Neurolings-rs/docs/REWRITE_PLAN.md`
-   - `E:/Projects/Neurolings-rs/docs/contracts/cli-contract.md`
-   - `E:/Projects/Neurolings-rs/docs/HTTP-API.md`
-
-3. **测试资产**:
-   - `E:/Projects/Neurolings-rs/assets/DefaultMascot/` (embedded mascot)
-   - `E:/Projects/Neurolings-rs/mascot_pack/` (6 golden packages)
-   - `E:/Projects/Neurolings-rs/crates/*/tests/` (unit/integration tests)
-
----
-
-**结论**: Neurolings-rs 已完成核心功能重写，用户日常使用无明显差异。**两个占位符页面（Store/Codex）和服务端部署是当前唯一阻塞点**。建议优先完成这两页的接线工作，即可进入 v1.0 RC 阶段。
+# Neurolings-rs 1.0.0 全量审计与修复报告
+
+> 审计日期：2026-08-26
+> 行为基准：NeurolingsCE v0.5.3（C++17 / Qt 6.8）
+> 目标实现：Neurolings-rs 1.0.0（Rust + Flutter）
+> 审计方式：GPT-5.6 Sol（max）逐模块源码对照、协议检查、边界测试、真实进程验证；修复由多个 GPT-5.6 Luna（max）并行落实，并由主线复核。
+
+## 一、结论摘要
+
+本次审计推翻了此前“核心功能已经接近完全对齐”的宽松判断。重写版本并非只有零散 UI 差异，而是在脚本执行、控制面鉴权、异步命令、IPC 超时、压缩包导入、多显示器坐标和跨平台窗口管理等关键路径上同时存在缺陷。其中若干问题会直接造成桌宠无法运行、运行时永久挂起、管理命令被重复执行、恶意包耗尽内存，或者在特定多屏布局下持续生成非法 JavaScript。
+
+审计发现的问题可以分为四类。第一类是确定性功能错误，例如负屏幕坐标被拼成 `p.x--1920.0`、Flutter Manager 把业务字段 `state` 当成操作状态、运行时把超时写请求再次发送。第二类是并发与生命周期错误，例如 Codex 连接持有互斥锁时再次进入失败关闭流程、HTTP 处理线程异常后不归还连接计数。第三类是资源边界错误，例如 7z 没有单文件上限、RAR/TAR 在完整读入后才检查大小、Codex 计划增量缓存可以无限增长。第四类是平台行为缺口，例如 macOS Manager 生命周期函数恒返回失败、Linux 只把 X 根窗口视作一个显示器、X11 菜单用 `image_text8` 导致中文被替换成问号。
+
+当前 Windows 主路径的高危问题已完成修复，QuickJS、HTTP、Codex、IPC、operation 协议和压缩包预算均补充了针对性回归测试。macOS 与 Linux 的纯代码路径已尽量在现有依赖内收敛，但本机是 Windows，不能把交叉编译等同于真机验证。Flutter 工程现已补齐 Linux/macOS runner，并将三平台 Rust、Flutter 和 release 打包纳入原生 CI；平台窗口行为仍以真机交互验收为准。
+
+## 二、审计范围与判定方法
+
+审计覆盖 `neurolings-engine`、`neurolings-pack`、`neurolings-platform`、`neurolings-runtime`、`neurolings-cli`、`neurolings-store` 和 Flutter Manager。对外契约以 CE v0.5.3 的 CLI 输出、IPC 消息、HTTP 路由、`.mascot` 包结构及桌宠行为状态为准；内部实现可以采用不同技术，但必须满足相同输入产生相同可观察结果，并且不能降低安全边界。
+
+检查不是只看函数名是否存在。每条路径至少验证以下内容：输入缺失、显式 `null`、类型错误、超时、半包、短写、多字节 UTF-8、负坐标、多实例、线程异常、超限数据和进程关闭顺序。能在 Windows 上运行的路径使用真实二进制、真实 IPC 和真实桌宠模板验证；平台专属代码使用静态 API 核对、单元测试和目标平台 `cargo check`，并将无法在本机证明的部分明确标记为风险。
+
+## 三、严重问题与修复状态
+
+### 1. QuickJS 在负坐标显示器上生成非法表达式（P0，已修复）
+
+根因位于 `crates/neurolings-engine/src/scripting/context.rs`。边界函数通过字符串插值生成 `Math.abs(p.x-{x})`。当 `x` 为 `-1920.0` 时，结果是 `Math.abs(p.x--1920.0)`，QuickJS 会把连续减号解释为非法语法。该错误只在显示器位于主屏左侧或下方时出现，因此单屏测试长期无法暴露。更严重的是，脚本错误此前被 `.ok()` 丢弃，日志只显示行为未命中，无法看到真正的 JS 异常。
+
+修复方法是给插入的减数加括号，统一生成 `p.x-(-1920.0)` 和 `p.y-(-1080.0)`；求值改用 `CatchResultExt` 提取 QuickJS 异常；新增负坐标环境、完整 Default 行为列表和共享上下文交错 tick 测试。真实 IPC 连续召唤两只 Default 后，终端不再出现脚本警告。
+
+### 2. 桌宠之间共享可变 JavaScript 全局对象（P0，已修复）
+
+默认 `Factory` 曾让所有桌宠共用一个 QuickJS `Context`。任意模板只要执行 `Math = 7`、覆盖辅助函数或创建全局属性，就会改变其他桌宠随后的行为。状态快照虽然会在每次求值前替换 `mascot`，但无法恢复被改写的内建对象，因此这不是状态注入能够解决的问题。
+
+修复后，默认工厂为每个 `Product` 创建独立 `ScriptContext`；只有调用方显式传入上下文时才保留共享语义，便于确定性测试和受控场景使用。回归测试让第一只桌宠覆盖 `Math`，确认第二只桌宠仍能调用 `Math.random`。
+
+### 3. 桌宠包脚本可用无限循环卡死主循环（P0，已修复）
+
+行为条件、变量表达式和普通脚本均来自可导入桌宠包。若只给 HTTP selector 设置执行上限，包内 `while(true){}` 仍会在运行时主线程无限执行，所有桌宠、IPC 和托盘事件都会停止响应。
+
+所有包脚本入口现在共享 100ms 中断预算，自定义 selector 仍可使用调用方提供的更严格预算。超时通过 RAII 守卫安装和恢复 deadline，确保一次中断不会污染下一次求值。测试同时验证无限循环能够被中断，以及同一上下文随后仍可执行 `true`。这里的安全取舍是明确的：CE v0.5.3 没有为所有内部表达式设置预算，但 1.0.0 必须防止导入包永久占用主循环。
+
+### 4. Codex 错误响应触发互斥锁自锁（P0，已修复）
+
+`codex_appserver.rs` 的响应分发先取得 `client` 锁并从 pending 表删除请求，随后在错误响应或初始化失败时调用 `fail_closed`。`fail_closed` 又尝试取得同一个非重入 mutex，线程因此永久阻塞。审批请求超过上限时也有相同锁顺序问题。
+
+修复方法不是增加超时兜底，而是缩短 guard 作用域：先在局部块中取出 pending 类型并释放锁，再进入失败关闭；审批超限分支在调用前显式释放 guard。新增两个带一秒完成窗口的并发回归测试，分别覆盖错误响应和审批上限。
+
+### 5. Codex 中文长消息在字节边界切片时 panic（P1，已修复）
+
+旧逻辑用 `message[cut..]` 保留末尾 128 KiB。Rust 字符串索引必须位于 UTF-8 字符边界；当 `cut` 落在中文字符中间时，处理线程会 panic。修复后的 `retain_tail_bytes` 从预算起点向后移动到合法字符边界，保证结果不超过预算且不破坏文本。回归输入以中文开头并跨过 128 KiB 限制，验证不会 panic。
+
+### 6. Codex plan delta 缓存无界增长（P1，已修复）
+
+计划增量按 thread、turn、item 组合键保存，但此前只有收到理想的 `item/completed` 才删除。异常断开、轮次失败、客户端发送大量不同 item id 或单项持续增量时，HashMap 会一直增长。
+
+当前限制为单项 16 KiB、最多 64 项、总预算 128 KiB，键字段最多 256 个字符；缓存维护最近更新顺序，达到任一预算时淘汰较早条目。轮次开始、轮次完成、线程关闭、停止和失败关闭都会清空缓存。测试覆盖条目数、单项、总量、超长中文键及各类清理事件。
+
+### 7. HTTP `%中` 触发字符串边界 panic（P0，已修复）
+
+URL 解码循环以字节下标前进，却用 `&s[i + 1..i + 3]` 对 UTF-8 字符串切片。输入 `%中` 时，`i + 3` 落在“中”的编码内部，任何客户端都可以让连接处理线程 panic。
+
+解码器现直接读取字节并手工解析十六进制，不再对原字符串按字节位置切片。有效百分号编码正常还原；截断或非法序列保留字面 `%`；编码结果不是 UTF-8 时使用替换字符，保证路由解析继续执行。测试覆盖中文编码、`%中`、孤立 `%`、`%2`、`%G0` 和 `%FF`。
+
+### 8. HTTP 线程 panic 后连接名额永久泄漏（P1，已修复）
+
+并发上限使用原子计数，但旧流程只在 `handle_connection` 正常返回后手动减一。线程 panic 会跳过该语句，重复触发后 32 个名额全部耗尽，服务即使仍在监听也不再处理请求。
+
+当前以 `ConnectionSlot` 表示已占用名额，构造时原子增加，`Drop` 时归还。测试使用 `catch_unwind` 模拟处理函数 panic，确认计数回到零并能再次取得名额。
+
+### 9. 慢命令超时后被 Manager 重放（P0，已修复）
+
+运行时收到写命令后可能已经排入主线程，只是 HTTP 等待响应超时。Manager 若把 202 当作普通失败并再次发送原请求，安装、导入、删除、恢复组合等非幂等操作就会执行两次。
+
+修复引入稳定 `operation_id`。只有服务端已经确认取得 operation id 的请求才能返回 202；尚未确认排队的超时返回 504。Manager 收到 202 后只轮询 `operation_status`，绝不重放写请求。完成结果保留 300 秒、最多 64 条，未知或过期 id 返回 404；Manager 默认轮询上限 270 秒，保证不会跨过服务端保留期。
+
+### 10. operation 字段覆盖 GitHub 登录业务状态（P1，已修复）
+
+完成响应曾把通用操作状态写到 `state`，而 Device Flow 同样使用 `state: pending/authorized` 表示登录阶段。通用包装层因此破坏业务结果，Store 页面可能把已授权状态读成 completed。
+
+协议现使用独立字段 `operation_state`，并保留业务 `state`。回归测试分别覆盖 `pending` 与 `authorized`，确认包装完成结果后业务字段不变。
+
+### 11. Manager 永久缓存空控制令牌（P0，已修复）
+
+`RuntimeApi` 在对象构造时读取环境令牌。Flutter 状态对象可能先于运行时启动构造，此时令牌为空；即使运行时随后注入有效令牌，该 API 实例仍永久发送未鉴权请求。
+
+默认实例现在在每次请求前动态读取当前内存令牌，测试专用的显式 `controlToken` 仍具有最高优先级。Flutter 回归测试覆盖“构造时无令牌、启动后令牌出现”的生命周期。
+
+### 12. RAR/TAR/7z 解压预算检查过晚（P0，已修复，需持续模糊测试）
+
+统一安全目标是：压缩包本身不超过 100 MiB、解压总量不超过 100 MiB、单文件不超过 16 MiB、文件数量不超过 4096。此前 7z 直接调用整包解压，没有单文件限制；TAR 和 RAR 把条目完整读入 `Vec` 后才累加总量。攻击者可以在错误返回前消耗大量内存和磁盘。
+
+修复将预算前移到读取之前。TAR 使用 header size 预检，并通过 `take(remaining + 1)` 只多读一个探测字节；7z 使用自定义 extract callback，在默认写盘函数执行前检查声明尺寸、单项和总量；RAR 使用 `unpacked_size` 在 `extract_to()` 落盘前拒绝超限条目，并跳过目录项。所有路径共享溢出安全的预算函数，路径不安全而被跳过的文件仍计入条目数和声明尺寸预算。新增边界、超限、总量剩余、TAR/7z 实际归档和小文件成功解压测试。`unrar 0.5.8` 的公开 API 不提供可施加字节上限的流式写入回调，因此 RAR 在落盘后还会核对实际大小并删除不匹配文件；后续仍应使用畸形 RAR 语料做模糊测试，验证底层库始终遵守 header 声明尺寸。
+
+### 13. IPC 把连接和响应共用一个短超时（P0，已修复）
+
+CLI 启动运行时后，连接建立和业务执行具有不同时间尺度。旧实现用同一个 500ms 窗口覆盖两阶段，导致刚拉起的运行时、慢磁盘导入和系统调度抖动频繁误报。Windows 命名管道客户端还存在短写未检测、错误路径句柄关闭不完整的问题。
+
+当前把连接、写入和读取超时分离；自动启动后的首次请求使用有限重试窗口；客户端与服务端都检测短写和零字节读取边界；`--stop` 按先确认响应、后等待进程退出的顺序执行。相关 CLI 集成测试和 platform 单元测试已通过。
+
+### 14. Windows 可观察行为存在多处偏差（P1，已修复）
+
+审计还修复了气泡 GDI 位图句柄误用、活动窗口 uid 切换、逐屏 DPI、窗口钳制与绘制偏移、双击与右键菜单、托盘恢复 Manager、默认模板和数据 id 稳定性、迁移注册表类型、更新安装后退出等问题。这些问题分散在 `bubble.rs`、`windows.rs`、`runtime`、`services.rs`、`templates.rs` 和 `migrate.rs`，但共同根因是只实现了“接口存在”，没有逐项验证 CE v0.5.3 的状态转换和平台坐标语义。
+
+## 四、跨平台问题
+
+### 1. macOS Manager 生命周期（P1，已修复代码，待真机）
+
+`manager_window.rs` 曾让 macOS 使用通用 stub，全部生命周期方法恒为 false。当前已通过 `NSWorkspace.runningApplications` 定位 `neurolings_manager`，并用 `NSRunningApplication` 实现运行状态、应用隐藏、恢复和激活。Flutter Manager 每秒心跳同时上报 `windowManager.isVisible()`；运行时只转发合法布尔值，macOS 在三秒内优先采用窗口级心跳，超时后回退 `NSRunningApplication::isHidden`，成功 show/hide 时也同步缓存。纯函数测试覆盖命中与过期边界，最终仍需 macOS 真机验证 `orderOut`、激活和多屏组合。
+
+### 2. macOS Manager 心跳坐标系（P1，已修复代码，待真机）
+
+Rust 后端把虚拟桌面归一化到“所有屏幕最左、最上为零”的左上坐标系，而 `window_manager 0.4.3` 的 macOS 插件用主屏高度翻转 Y，且不减虚拟桌面的最左坐标。左侧或上方外接屏会导致 Manager 矩形落入错误环境，随后召唤到错误屏幕。运行时现在依据 `EnvironmentSet` 的屏幕矩形规范化 macOS 心跳，纯函数测试覆盖左侧和上方显示器布局；最终仍需双屏 macOS 真机验证。
+
+### 3. Linux 多显示器枚举（P1，受依赖配置约束）
+
+当前 `x11rb` 只启用了 `xfixes` 与 `shape`，没有 RandR/Xinerama feature。代码枚举多个 X root，但常见 Xinerama/RandR 桌面只有一个 root，因此最终仍把整个虚拟桌面视作一块屏，工作区、召唤落点和屏幕钳制都会失去逐屏语义。可靠修复需要启用 RandR 并读取 active CRTC/output，或接入已有的屏幕枚举库；这项平台行为修复不属于当前构建收敛范围，不能伪装成已解决。
+
+### 4. Linux 中文菜单（P1，现有 X Core Text 能力不足）
+
+弹出菜单将非 ASCII 字符替换为 `?` 后调用 `image_text8`。直接改成 UTF-8 字节仍不正确，因为 X Core Text 不是 UTF-8；`image_text16` 也依赖服务器端双字节字体，不能保证中文字体和 Unicode 映射。可靠方案是使用 Pango/Cairo/Xft 或让 GTK/Flutter 承载菜单，这同样涉及新依赖和平台构建配置。当前构建修复保留这项明确风险，不能声称中文菜单已对齐。
+
+### 5. Flutter Linux/macOS runner 缺失（P0，已修复工程配置）
+
+`manager/.metadata` 现已登记 Windows、Linux 和 macOS，两个平台 runner 也已纳入版本控制。CI 在三个原生宿主上分别执行 Rust 门禁、Flutter analyze/test 和 release build；发布工作流把 Rust runtime、CLI 与 Manager 合并为对应平台产物。macOS App Sandbox 已按本地控制面和子进程需求关闭，加入 Rust 二进制后执行临时重签名与严格校验。正式分发仍需维护者配置 Apple Developer 签名、公证及各平台真机验收。
+
+## 五、验证证据
+
+本报告只记录当前最终工作树实际执行过的结果，不把推测或更早工作树的结果写成通过。最终证据如下：
+
+- `cargo test --workspace --locked`：194/194 通过。分组为 CLI 25、common 10、engine 24、pack 37、platform 12、runtime 75、store 11；全部 doctest 也通过且没有测试被忽略。
+- `cargo check --workspace --all-targets --locked`：通过；`cargo clippy --workspace --all-targets --locked -- -D warnings`：通过；`cargo fmt --all -- --check`：通过。
+- `cargo build --workspace --locked`：通过，随后使用该次最终构建产物执行运行时验证。
+- `flutter analyze --no-pub`：0 问题；`flutter test --no-pub`：5/5 通过。覆盖 operation 只轮询、动态控制令牌、后台失败透传、窗口可见性心跳与 Manager 基础渲染。
+- `cargo check -p neurolings-platform --target x86_64-apple-darwin --locked` 与 Linux 对应目标：通过。runtime 的 macOS 完整交叉构建仍受本机缺少 macOS C/C++ 工具链限制，不能据此替代真机构建。
+- Default、Cerber、Eviling、Neuron、Tuteling、Vedaling、Weuron 分别运行 300 tick，七个最终构建进程均报告加载 7 个模板并完成 300/300，总计 2100 tick。
+- 真实 IPC 连续召唤两只 Default，得到不同运行时 id 1/2 和标签 101/102；列表同时返回两只，关闭 101 后只剩 102，`--close-all` 后为空。再次召唤标签 103 后，`--stop` 返回 `stopped: true`。
+- IPC 验证结束后 NeurolingsCE/Manager 残留进程为 0；最新会话日志中 QuickJS、脚本 panic 关键字命中数为 0。
+- `git diff --check`：通过；新增差异中的禁用措辞扫描：0 命中。
+
+## 六、有意保留的差异
+
+有些差异不是遗漏，而是为消除未定义行为或提高安全性作出的明确选择：
+
+1. 脚本求值错误记录一次警告并回退，不因单个包表达式错误直接关闭桌宠；无限循环仍会被强制中断。
+2. `is_num` 要求结果是有限数，不复制 `strtod` 对正负溢出的不对称边缘行为。
+3. 对外默认模板名统一为 `Default`，同时兼容 `@` 与 `Default Mascot` 别名。
+4. breed/transform 子代朝向使用确定值，不复制未初始化内存产生的随机结果。
+5. 无效 Codex 转发配置静默跳过，避免未启用集成时持续刷日志；配置存在但执行失败仍记录警告。
+
+这些选择必须保留测试和文档，避免后续维护者为了表面一致而重新引入崩溃、挂起或未定义行为。
+
+## 七、剩余风险与发布建议
+
+当前不应把“三平台均可构建”表述为“三平台行为全部完成”。Linux/macOS runner 与原生构建门禁已经补齐，但它们不能证明窗口层级、透明命中、菜单字体、托盘、辅助功能权限和多屏坐标符合真实桌面环境。
+
+建议先以三平台 CI 和联合发布工作流固定可重复的构建证据，再补齐 RandR 屏幕枚举和 Unicode 菜单渲染，最后分别在 Windows 混合 DPI、Linux X11/XWayland、macOS 双屏与辅助功能权限开关两种状态下执行真实桌宠、托盘、Manager 显隐、活动窗口攀附和关机恢复测试。
+
+本轮修复已经消除了已定位的 Windows 主路径 P0/P1 缺陷，但“全量修复”在工程意义上还要求上述平台阻塞被解除。报告将这些边界明确保留，是为了避免用交叉编译成功替代用户可运行的证据。

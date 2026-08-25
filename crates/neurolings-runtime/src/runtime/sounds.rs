@@ -51,21 +51,7 @@ impl SoundPlayer {
         if let Some(cached) = self.resolved.get(name) {
             return cached.clone();
         }
-        // 防目录穿越：只接受纯文件名。
-        let safe = !name.is_empty()
-            && !name.contains('/')
-            && !name.contains('\\')
-            && name != "."
-            && name != "..";
-        let found = if safe {
-            let candidate = self.sound_dir.join(name);
-            let size_ok = std::fs::metadata(&candidate)
-                .map(|m| m.len() <= AUDIO_FILE_MAX_BYTES)
-                .unwrap_or(false);
-            (candidate.is_file() && size_ok).then_some(candidate)
-        } else {
-            None
-        };
+        let found = resolve_sound_path(&self.sound_dir, name);
         self.resolved.insert(name.to_string(), found.clone());
         found
     }
@@ -99,5 +85,38 @@ impl SoundPlayer {
     /// 当前是否有音效在播。
     pub fn playing(&self) -> bool {
         self.active.as_ref().is_some_and(|p| !p.empty())
+    }
+}
+
+/// 在音效根目录中解析符合路径安全约束的相对子路径。
+fn resolve_sound_path(sound_dir: &Path, name: &str) -> Option<PathBuf> {
+    let candidate = neurolings_pack::safe_child_path(sound_dir, name)?;
+    let metadata = std::fs::metadata(&candidate).ok()?;
+    (metadata.is_file() && metadata.len() <= AUDIO_FILE_MAX_BYTES).then_some(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_nested_sound_path() {
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("voice");
+        std::fs::create_dir(&nested).unwrap();
+        let sound = nested.join("hit.wav");
+        std::fs::write(&sound, b"test").unwrap();
+
+        assert_eq!(
+            resolve_sound_path(root.path(), "voice/hit.wav"),
+            Some(sound)
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_sound_path() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_sound_path(root.path(), "../hit.wav"), None);
+        assert_eq!(resolve_sound_path(root.path(), "/hit.wav"), None);
     }
 }

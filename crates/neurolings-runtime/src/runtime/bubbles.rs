@@ -153,8 +153,8 @@ pub fn process_bubbles(
                 (title, strip_markdown(&body), ttl)
             }
         });
-        if let Some((_title, body, ttl)) = incoming {
-            if let Ok((bitmap, width, height)) = bubble::render_bubble(&body, 260) {
+        if let Some((title, body, ttl)) = incoming {
+            if let Ok((bitmap, width, height)) = bubble::render_bubble(&title, &body, 260) {
                 session.bubble_bitmap = Some(bitmap.clone());
                 if session.bubble_window.is_none() {
                     match backend {
@@ -176,7 +176,7 @@ pub fn process_bubbles(
                     let _ = window.update_frame(&bitmap, width, height, top_left);
                 }
                 session.bubble_until = now + ttl;
-                session.bubble_is_codex = !_title.is_empty();
+                session.bubble_is_codex = !title.is_empty();
             }
         } else if session.bubble_window.is_some() && now < session.bubble_until {
             // 跟随桌宠移动（位图不变，只更新位置）。

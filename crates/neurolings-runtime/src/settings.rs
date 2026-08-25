@@ -27,7 +27,15 @@ pub const KEY_STARTUP_COMBO_MODE: &str = "startup/restoreCombinationMode";
 pub const KEY_STARTUP_COMBO_ID: &str = "startup/restoreCombinationId";
 pub const KEY_WINDOWED_BG: &str = "windowedModeBackground";
 pub const KEY_UPDATE_CHECK: &str = "update/checkOnStartup";
+pub const KEY_UPDATE_DOWNLOADED_VERSION: &str = "update/downloadedVersion";
+pub const KEY_UPDATE_DOWNLOADED_PATH: &str = "update/downloadedInstallerPath";
+pub const KEY_UPDATE_DOWNLOADED_SHA256: &str = "update/downloadedInstallerSha256";
 pub const KEY_LANGUAGE: &str = "language";
+pub const KEY_PROXY_MODE: &str = "update/proxyMode";
+pub const KEY_PROXY_HOST: &str = "update/proxyHost";
+pub const KEY_PROXY_PORT: &str = "update/proxyPort";
+pub const KEY_PROXY_USER: &str = "update/proxyUsername";
+pub const KEY_PROXY_PASS: &str = "update/proxyPassword";
 
 /// 语言的运行时文案（右键菜单/托盘）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,11 +84,26 @@ impl Settings {
     }
 
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        self.get(key).and_then(Value::as_bool).unwrap_or(default)
+        match self.get(key) {
+            Some(Value::Bool(b)) => *b,
+            // 兼容 CE 迁移值：Qt 把 bool 存为 REG_DWORD，迁移后是数字 0/1。
+            Some(Value::Number(n)) => n
+                .as_i64()
+                .or_else(|| n.as_f64().map(|v| v as i64))
+                .map(|v| v != 0)
+                .unwrap_or(default),
+            _ => default,
+        }
     }
 
     pub fn get_i64(&self, key: &str, default: i64) -> i64 {
-        self.get(key).and_then(Value::as_i64).unwrap_or(default)
+        match self.get(key) {
+            Some(Value::Number(n)) => n
+                .as_i64()
+                .or_else(|| n.as_f64().map(|v| v as i64))
+                .unwrap_or(default),
+            _ => default,
+        }
     }
 
     pub fn get_string(&self, key: &str, default: &str) -> String {
@@ -105,15 +128,20 @@ impl Settings {
     }
 
     pub fn locale(&self) -> Locale {
-        // 未设置时参考 LANG 环境变量（由管理器在首次启动时写入用户语言）。
+        // 未设置时：LANG → Windows UI 语言 → 英语。
         let value = self.get_string(KEY_LANGUAGE, "");
-        if value.is_empty() {
-            if let Ok(lang) = std::env::var("LANG") {
-                return Locale::from_setting(&lang);
-            }
-            return Locale::En;
+        if !value.is_empty() {
+            return Locale::from_setting(&value);
         }
-        Locale::from_setting(&value)
+        if let Ok(lang) = std::env::var("LANG")
+            && !lang.is_empty()
+        {
+            return Locale::from_setting(&lang);
+        }
+        if system_ui_is_chinese() {
+            return Locale::ZhCn;
+        }
+        Locale::En
     }
 
     fn save(&self) -> Result<(), String> {
@@ -125,5 +153,50 @@ impl Settings {
         )
         .map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+    }
+}
+
+fn system_ui_is_chinese() -> bool {
+    #[cfg(windows)]
+    {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_CURRENT_USER;
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(key) = hkcu.open_subkey("Control Panel\\International")
+            && let Ok(name) = key.get_value::<String, _>("LocaleName")
+        {
+            return name.to_lowercase().starts_with("zh");
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn get_i64_accepts_float_json_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = Settings::load(dir.path());
+        settings.set(KEY_BUBBLE_CLICKS, json!(3.0)).unwrap();
+        assert_eq!(settings.get_i64(KEY_BUBBLE_CLICKS, 1), 3);
+    }
+
+    #[test]
+    fn get_bool_accepts_migrated_dword_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = Settings::load(dir.path());
+        // CE 迁移来的 bool 是 REG_DWORD 数字：0/1 应读作 false/true。
+        settings.set(KEY_BUBBLE_ENABLED, json!(1)).unwrap();
+        assert!(settings.get_bool(KEY_BUBBLE_ENABLED, false));
+        settings.set(KEY_BUBBLE_ENABLED, json!(0)).unwrap();
+        assert!(!settings.get_bool(KEY_BUBBLE_ENABLED, true));
+        // 原生 bool 与非数字值的行为不变。
+        settings.set(KEY_BUBBLE_ENABLED, json!(true)).unwrap();
+        assert!(settings.get_bool(KEY_BUBBLE_ENABLED, false));
+        settings.set(KEY_BUBBLE_ENABLED, json!("yes")).unwrap();
+        assert!(settings.get_bool(KEY_BUBBLE_ENABLED, true));
     }
 }

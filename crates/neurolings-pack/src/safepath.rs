@@ -86,22 +86,46 @@ pub fn safe_child_path(root: &Path, name: &str) -> Option<PathBuf> {
         return None;
     }
 
-    // 从候选路径向上找到最深的已存在祖先，验证其规范形式仍在规范 root 之内
-    // （封堵符号链接逃逸）。
-    let mut existing = candidate.clone();
-    while !existing.exists() && existing != absolute_root {
-        if !existing.pop() {
-            break;
-        }
-    }
-    if let Ok(canonical_existing) = existing.canonicalize()
-        && canonical_existing != canonical_root
-        && !is_contained(&canonical_root, &canonical_existing)
-    {
+    if !existing_components_are_contained(
+        &absolute_root,
+        &canonical_root,
+        normalized_name.split('/'),
+    ) {
         return None;
     }
 
     Some(candidate)
+}
+
+/// 逐级验证所有已存在的路径分量，避免链接跟随失败时退回到其父目录而漏检。
+fn existing_components_are_contained<'a>(
+    absolute_root: &Path,
+    canonical_root: &Path,
+    components: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let mut current = absolute_root.to_path_buf();
+    for component in components {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(_) => {
+                // 必须规范化当前分量；链接损坏、权限不足或目标不可解析时按不安全处理。
+                let Ok(canonical_current) = current.canonicalize() else {
+                    return false;
+                };
+                if canonical_current != canonical_root
+                    && !is_contained(canonical_root, &canonical_current)
+                {
+                    return false;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // 首个不存在分量之后不可能预先包含链接，后续创建仍由调用方负责原子落盘。
+                break;
+            }
+            Err(_) => return false,
+        }
+    }
+    true
 }
 
 /// 尽力解析的绝对路径，不解析符号链接。

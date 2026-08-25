@@ -115,6 +115,7 @@ mod macos {
     }
 }
 
+#[cfg(windows)]
 const APP_NAME: &str = "NeurolingsCE";
 
 #[cfg(target_os = "linux")]

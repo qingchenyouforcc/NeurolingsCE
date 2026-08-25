@@ -20,8 +20,21 @@ fn dynamic_prefix(s: &str) -> Option<u8> {
     }
 }
 
+/// 对齐 C 版 `strtod` 的数值解析：只跳过前导空白（C `isspace` 集合），
+/// 解析必须消耗到串尾，且结果必须为有限值——溢出（如 "1e999"）、
+/// inf、NaN 一律视为非数。
+fn parse_num(s: &str) -> Option<f64> {
+    let t = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    if t.is_empty() {
+        return None;
+    }
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+/// 谓词形式仅供测试断言使用；生产路径通过 [`parse_num`] 直接取解析结果。
+#[cfg(test)]
 fn is_num(s: &str) -> bool {
-    !s.is_empty() && s.parse::<f64>().is_ok()
+    parse_num(s).is_some()
 }
 
 #[derive(Default)]
@@ -70,8 +83,8 @@ impl Variables {
             match dynamic_prefix(&val) {
                 None => {
                     // 静态值：数字直接写入，否则按字符串写入。
-                    if is_num(&val) {
-                        ctx.set_scope_num(scope, key, val.parse().unwrap());
+                    if let Some(n) = parse_num(&val) {
+                        ctx.set_scope_num(scope, key, n);
                     } else {
                         ctx.set_scope_str(scope, key, &val);
                     }
@@ -142,5 +155,52 @@ impl Variables {
 
     pub fn has(&self, key: &str) -> bool {
         self.attr_keys.contains(key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_num_matches_strtod_semantics() {
+        // strtod 跳过前导空白。
+        assert!(is_num(" 2"));
+        assert!(is_num("\t3.5"));
+        assert!(is_num("2"));
+        assert!(is_num("-2.5e3"));
+        assert!(is_num("+.5"));
+        // 尾部空白不允许（strtod 要求 *end 恰好到串尾）。
+        assert!(!is_num("2 "));
+        // 溢出与非有限值视为非数（对齐 C++ 的 val != HUGE_VAL 检查）。
+        assert!(!is_num("1e999"));
+        assert!(!is_num("-1e999"));
+        assert!(!is_num("inf"));
+        assert!(!is_num("nan"));
+        // 空串与纯空白不是数。
+        assert!(!is_num(""));
+        assert!(!is_num("   "));
+        assert!(!is_num("abc"));
+        assert!(!is_num("1,5"));
+    }
+
+    #[test]
+    fn static_num_attr_with_leading_space_is_numeric() {
+        // " 2" 是数，且按数值写入作用域（此前直接用 val.parse() 会 panic）。
+        let ctx = ScriptContext::new();
+        let mut vars = Variables::new();
+        let mut attr = HashMap::new();
+        attr.insert("W".to_string(), " 2".to_string());
+        vars.init(ctx, &attr);
+        assert_eq!(vars.get_num("W", -1.0), 2.0);
+        assert_eq!(vars.get_string("W", "fallback"), "fallback");
+        // 溢出值按字符串处理，与 C++ 一致。
+        let mut vars2 = Variables::new();
+        let ctx2 = ScriptContext::new();
+        let mut attr2 = HashMap::new();
+        attr2.insert("Big".to_string(), "1e999".to_string());
+        vars2.init(ctx2, &attr2);
+        assert_eq!(vars2.get_string("Big", "fallback"), "1e999");
+        assert_eq!(vars2.get_num("Big", -1.0), -1.0);
     }
 }

@@ -27,6 +27,7 @@ pub struct Product {
 pub struct Factory {
     templates: HashMap<String, Rc<Template>>,
     pub script_ctx: Rc<ScriptContext>,
+    share_script_ctx: bool,
     pub env: Option<Rc<RefCell<Environment>>>,
 }
 
@@ -38,9 +39,11 @@ impl Default for Factory {
 
 impl Factory {
     pub fn new(script_ctx: Option<Rc<ScriptContext>>) -> Self {
+        let share_script_ctx = script_ctx.is_some();
         Self {
             templates: HashMap::new(),
             script_ctx: script_ctx.unwrap_or_else(ScriptContext::new),
+            share_script_ctx,
             env: None,
         }
     }
@@ -51,11 +54,16 @@ impl Factory {
             .get(name)
             .cloned()
             .ok_or_else(|| EngineError::Logic(format!("no such template: {name}")))?;
+        let script_ctx = if self.share_script_ctx {
+            self.script_ctx.clone()
+        } else {
+            ScriptContext::new()
+        };
         let manager = Manager::new(
             &template.actions_xml,
             &template.behaviors_xml,
             init,
-            Some(self.script_ctx.clone()),
+            Some(script_ctx),
         )?;
         manager.state.borrow_mut().env = self.env.clone();
         Ok(Product { template, manager })
@@ -93,5 +101,44 @@ impl Factory {
 
     pub fn get_template(&self, name: &str) -> Option<Rc<Template>> {
         self.templates.get(name).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn register_default(factory: &mut Factory) {
+        factory
+            .register_template(Template {
+                name: "Default".to_string(),
+                actions_xml: include_str!("../../../../assets/DefaultMascot/actions.xml")
+                    .to_string(),
+                behaviors_xml: include_str!("../../../../assets/DefaultMascot/behaviors.xml")
+                    .to_string(),
+                path: String::new(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn default_factory_isolates_script_globals_between_products() {
+        let mut factory = Factory::new(None);
+        register_default(&mut factory);
+        let first = factory.spawn("Default", Initializer::default()).unwrap();
+        let second = factory.spawn("Default", Initializer::default()).unwrap();
+
+        assert!(!Rc::ptr_eq(
+            &first.manager.script_ctx,
+            &second.manager.script_ctx
+        ));
+        first.manager.script_ctx.eval("Math = 7");
+        assert!(first.manager.script_ctx.eval_bool("Math === 7"));
+        assert!(
+            second
+                .manager
+                .script_ctx
+                .eval_bool("typeof Math.random === 'function'")
+        );
     }
 }

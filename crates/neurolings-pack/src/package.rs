@@ -62,7 +62,11 @@ pub fn normalized_archive_path(path: &str) -> Option<String> {
         }
         clean_parts.push(part);
     }
-    Some(clean_parts.join("/"))
+    if clean_parts.is_empty() {
+        None
+    } else {
+        Some(clean_parts.join("/"))
+    }
 }
 
 /// 判断归一化后的路径是否属于受支持的载荷内容。
@@ -742,7 +746,7 @@ pub fn write_package_from_memory(entries: &[(String, Vec<u8>)], package_path: &P
             )));
         }
         if relative.to_ascii_lowercase().starts_with("img/") {
-            let _ = validate_png_dimensions(&relative, data);
+            validate_png_dimensions(&relative, data)?;
         }
         collected.push((relative, data.clone()));
     }
@@ -940,4 +944,20 @@ fn repack_dir_to_zip(dir: &Path, zip_path: &Path) -> std::result::Result<(), Str
         .finish()
         .map_err(|e| format!("zip finish error: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_archive_path_rejects_empty_paths() {
+        assert_eq!(normalized_archive_path(""), None);
+        assert_eq!(normalized_archive_path("/"), None);
+        assert_eq!(normalized_archive_path("////"), None);
+        assert_eq!(
+            normalized_archive_path("img\\shime1.png"),
+            Some("img/shime1.png".to_string())
+        );
+    }
 }

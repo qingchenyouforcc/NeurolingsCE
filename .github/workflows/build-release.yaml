@@ -3,62 +3,87 @@ name: Build Release
 on:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust-release:
-    name: Rust release (${{ matrix.os }})
+  desktop-release:
+    name: Desktop release (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
         include:
           - os: windows-latest
+            platform: windows
             artifact: NeurolingsCE-windows-x64
+            package: NeurolingsCE-windows-x64.zip
           - os: ubuntu-latest
+            platform: linux
             artifact: NeurolingsCE-linux-x64
+            package: NeurolingsCE-linux-x64.tar.gz
           - os: macos-latest
+            platform: macos
             artifact: NeurolingsCE-macos-arm64
+            package: NeurolingsCE-macos-arm64.zip
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --workspace
-      - run: cargo test --release --workspace
-      - name: Package artifacts (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          cargo install cargo-wix --version 0.3.8 --locked --force
-          .\packaging\package-windows.ps1
-          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            target/release/NeurolingsCE*
-            dist/**
-          if-no-files-found: warn
-          retention-days: 7
-
-  flutter-release:
-    name: Flutter manager
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang cmake ninja-build pkg-config libasound2-dev libgtk-3-dev liblzma-dev
+      - run: cargo build --release --workspace --locked
+      - run: cargo test --release --workspace --locked
       - run: flutter pub get
         working-directory: manager
-      - run: flutter build windows --release
+      - run: flutter build ${{ matrix.platform }} --release
         working-directory: manager
-      - uses: actions/upload-artifact@v4
+      - name: Package Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\packaging\package-windows.ps1
+          Compress-Archive -Path dist\NeurolingsCE-windows-x64\* -DestinationPath ${{ matrix.package }}
+      - name: Package Linux application
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp -a manager/build/linux/x64/release/bundle dist/${{ matrix.artifact }}
+          cp target/release/NeurolingsCE target/release/NeurolingsCE-cli dist/${{ matrix.artifact }}/
+          tar -C dist -czf ${{ matrix.package }} ${{ matrix.artifact }}
+      - name: Package macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=manager/build/macos/Build/Products/Release/neurolings_manager.app
+          cp target/release/NeurolingsCE target/release/NeurolingsCE-cli "$app/Contents/MacOS/"
+          final_app=manager/build/macos/Build/Products/Release/NeurolingsCE.app
+          mv "$app" "$final_app"
+          /usr/bin/codesign --force --sign - "$final_app/Contents/MacOS/NeurolingsCE"
+          /usr/bin/codesign --force --sign - "$final_app/Contents/MacOS/NeurolingsCE-cli"
+          /usr/bin/codesign --force --sign - \
+            --entitlements manager/macos/Runner/Release.entitlements "$final_app"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$final_app"
+          /usr/bin/ditto -c -k --keepParent --sequesterRsrc \
+            "$final_app" \
+            ${{ matrix.package }}
+      - name: Upload release application
+        uses: actions/upload-artifact@v4
         with:
-          name: neurolings_manager-windows
-          path: manager/build/windows/x64/runner/Release/
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.package }}
+          if-no-files-found: error
           retention-days: 7

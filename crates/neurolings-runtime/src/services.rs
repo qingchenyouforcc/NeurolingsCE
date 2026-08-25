@@ -5,12 +5,19 @@
 //! spawn/alter 使用 request/patch 子对象，标签从 0 起分配，
 //! selector 为 JS 表达式并带时间预算。
 
-use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
+use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 
 use neurolings_common::version;
 use neurolings_engine::math::Vec2;
+use neurolings_platform::Rect;
 
 use crate::runtime::environment::EnvironmentSet;
 use crate::runtime::session::Session;
@@ -23,10 +30,116 @@ const SELECTOR_EVAL_TIMEOUT_MS: u64 = 25;
 const SELECTOR_BUDGET_MS: u64 = 50;
 /// selector 最大长度。
 const SELECTOR_MAX_LEN: usize = 1024;
+/// 后台慢任务队列容量。单 worker 串行处理包缓存，避免并发解压互相覆盖。
+const BACKGROUND_JOB_CAPACITY: usize = 4;
+/// 主循环尚未来得及消费时允许积压的完成事件数。
+const BACKGROUND_COMPLETION_CAPACITY: usize = 4;
+/// 内部控制面令牌字节数。256 位熵足以抵御本机端口探测。
+const INTERNAL_CONTROL_TOKEN_BYTES: usize = 32;
+/// 服务线程等待运行时主循环响应的最长时间；超时表示请求未被确认受理。
+const COMMAND_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+/// 后台操作最终结果在内存中保留的时间，供 Manager 完成轮询。
+const OPERATION_RESULT_RETENTION: Duration = Duration::from_secs(300);
+/// 同时保留的最终结果数量上限，避免异常客户端耗尽运行时内存。
+const OPERATION_RESULT_CAPACITY: usize = 64;
+
+/// runtime 与 Manager 之间传递内部控制面令牌的环境变量名。
+pub const INTERNAL_CONTROL_TOKEN_ENV: &str = "NEUROLINGSCE_MANAGER_TOKEN";
+
+static INTERNAL_CONTROL_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// 在启动阶段初始化内部控制面令牌。
+///
+/// 优先接受 Manager 显式传入的 256 位 URL-safe Base64 令牌；未传入时使用操作系统
+/// 密码学随机源生成。格式错误的显式令牌会拒绝启动，避免两端持有不同凭据。令牌仅
+/// 保存在进程内存，绝不写入设置、日志或响应。
+pub(crate) fn initialize_internal_control_token() -> Result<(), String> {
+    if INTERNAL_CONTROL_TOKEN.get().is_some() {
+        return Ok(());
+    }
+
+    let supplied = match std::env::var(INTERNAL_CONTROL_TOKEN_ENV) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err("internal control token is not valid Unicode".to_string());
+        }
+    };
+    let token = select_internal_control_token(supplied)?;
+    let _ = INTERNAL_CONTROL_TOKEN.set(token);
+    Ok(())
+}
+
+/// 读取已初始化的内部控制面令牌，供 runtime 拉起 Manager 时显式传递。
+pub(crate) fn internal_control_token() -> Option<&'static str> {
+    INTERNAL_CONTROL_TOKEN.get().map(String::as_str)
+}
+
+fn select_internal_control_token(supplied: Option<String>) -> Result<String, String> {
+    match supplied {
+        Some(value) if valid_internal_control_token(&value) => Ok(value),
+        Some(_) => Err("internal control token has an invalid format".to_string()),
+        None => generate_internal_control_token(),
+    }
+}
+
+fn valid_internal_control_token(value: &str) -> bool {
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .ok()
+        .is_some_and(|bytes| bytes.len() == INTERNAL_CONTROL_TOKEN_BYTES)
+}
+
+fn generate_internal_control_token() -> Result<String, String> {
+    let mut bytes = [0u8; INTERNAL_CONTROL_TOKEN_BYTES];
+    fill_secure_random(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+#[cfg(windows)]
+fn fill_secure_random(bytes: &mut [u8]) -> Result<(), String> {
+    use std::ffi::c_void;
+
+    #[link(name = "bcrypt")]
+    unsafe extern "system" {
+        fn BCryptGenRandom(
+            algorithm: *mut c_void,
+            buffer: *mut u8,
+            buffer_len: u32,
+            flags: u32,
+        ) -> i32;
+    }
+
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err("could not initialize the Windows secure random source".to_string())
+    }
+}
+
+#[cfg(not(windows))]
+fn fill_secure_random(bytes: &mut [u8]) -> Result<(), String> {
+    use std::io::Read as _;
+
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut source| source.read_exact(bytes))
+        .map_err(|_| "could not initialize the operating system secure random source".to_string())
+}
 
 pub struct PendingCommand {
     pub request: Value,
     pub reply: SyncSender<Value>,
+    /// 后台任务入队后回传稳定操作 ID；快速命令不会向该通道写入。
+    pub operation: SyncSender<u64>,
 }
 
 pub struct CommandChannel {
@@ -49,21 +162,511 @@ impl CommandChannel {
     }
 }
 
+/// 主循环持有的有界后台任务调度器。
+///
+/// worker 只能处理网络、文件和解析；所有 RuntimeView 改动由完成事件回到主循环后执行。
+pub(crate) struct BackgroundJobs {
+    jobs: SyncSender<BackgroundJob>,
+    completed: Receiver<BackgroundCompletion>,
+    pending: HashSet<u64>,
+    replies: HashMap<u64, SyncSender<Value>>,
+    results: HashMap<u64, OperationResult>,
+    next_id: u64,
+}
+
+struct OperationResult {
+    response: Value,
+    finished_at: Instant,
+}
+
+/// 命令分流结果：快速路径立即回复，慢路径仅提交不持有运行时视图的工作单元。
+pub(crate) enum BackgroundCommand {
+    NotBackground,
+    Reply(Value),
+    Job(BackgroundJobKind),
+}
+
+/// 可在后台 worker 中执行的慢工作类型。
+pub(crate) enum BackgroundJobKind {
+    UpdateCheck {
+        config: crate::update::UpdateRequestConfig,
+    },
+    UpdateDownload {
+        app_data_dir: PathBuf,
+        config: crate::update::UpdateRequestConfig,
+    },
+    UpdateInstall,
+    Import {
+        archive: PathBuf,
+        storage: PathBuf,
+        cache: PathBuf,
+    },
+    ReloadTemplates {
+        storage: PathBuf,
+        cache: PathBuf,
+    },
+    StoreIndex {
+        request: Value,
+    },
+    StoreInstall {
+        id: String,
+    },
+    StoreGitHubStart,
+    StoreGitHubStep,
+    StoreGitHubStatus,
+    StoreGitHubSignout,
+    StoreSubmit {
+        request: Value,
+    },
+    AnalyzeArchive {
+        request: Value,
+    },
+    ConvertArchive {
+        request: Value,
+    },
+    #[cfg(test)]
+    TestSleep(std::time::Duration),
+}
+
+struct BackgroundJob {
+    id: u64,
+    kind: BackgroundJobKind,
+}
+
+/// worker 结束后交由主循环提交的结果。
+pub(crate) struct BackgroundCompletion {
+    pub(crate) id: u64,
+    pub(crate) result: BackgroundResult,
+}
+
+/// 完成事件携带的纯数据结果；所有运行时状态改动在主线程完成。
+pub(crate) enum BackgroundResult {
+    Reply(Value),
+    Imported(ImportedTemplates),
+    Reloaded(Vec<crate::templates::LoadedTemplate>),
+    UpdateDownloaded(Result<crate::update::DownloadedUpdate, String>),
+}
+
+/// 导入完成后等待主线程登记的模板快照。
+pub(crate) struct ImportedTemplates {
+    changed: BTreeSet<String>,
+    templates: Vec<crate::templates::LoadedTemplate>,
+    store_entry: Option<Value>,
+}
+
+impl BackgroundJobs {
+    /// 创建单 worker 调度器，串行化共享存储与缓存的解压写入。
+    pub(crate) fn new() -> Self {
+        let (job_tx, job_rx) = sync_channel::<BackgroundJob>(BACKGROUND_JOB_CAPACITY);
+        let (completed_tx, completed_rx) =
+            sync_channel::<BackgroundCompletion>(BACKGROUND_COMPLETION_CAPACITY);
+        std::thread::spawn(move || {
+            while let Ok(job) = job_rx.recv() {
+                let result = execute_background_job(job.kind);
+                if completed_tx
+                    .send(BackgroundCompletion { id: job.id, result })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self {
+            jobs: job_tx,
+            completed: completed_rx,
+            pending: HashSet::new(),
+            replies: HashMap::new(),
+            results: HashMap::new(),
+            next_id: 1,
+        }
+    }
+
+    /// 提交慢任务；队列满时立即拒绝，避免无限积压请求和等待线程。
+    pub(crate) fn submit(
+        &mut self,
+        kind: BackgroundJobKind,
+        reply: &SyncSender<Value>,
+    ) -> Result<u64, Value> {
+        self.prune_results();
+        let id = self.allocate_id();
+        match self.jobs.try_send(BackgroundJob { id, kind }) {
+            Ok(()) => {
+                self.pending.insert(id);
+                self.replies.insert(id, reply.clone());
+                Ok(id)
+            }
+            Err(TrySendError::Full(job)) => {
+                job.kind.cancel_before_start();
+                Err(error_json(
+                    "Too many background operations are already in progress",
+                    "busy",
+                    429,
+                ))
+            }
+            Err(TrySendError::Disconnected(job)) => {
+                job.kind.cancel_before_start();
+                Err(error_json("runtime is shutting down", "unavailable", 503))
+            }
+        }
+    }
+
+    /// 取得一个已完成的后台任务事件；调用方必须在主循环中应用结果。
+    pub(crate) fn try_recv(&self) -> Option<BackgroundCompletion> {
+        self.completed.try_recv().ok()
+    }
+
+    /// 记录后台操作的最终响应，并使其可被内部控制面查询。
+    pub(crate) fn finish(&mut self, id: u64, response: Value) {
+        self.pending.remove(&id);
+        let response = completed_operation_response(id, response);
+        self.results.insert(
+            id,
+            OperationResult {
+                response,
+                finished_at: Instant::now(),
+            },
+        );
+        self.prune_results();
+    }
+
+    /// 取回首次调用的响应通道；状态结果已独立保存在操作记录中。
+    pub(crate) fn take_reply(&mut self, id: u64) -> Option<SyncSender<Value>> {
+        self.replies.remove(&id)
+    }
+
+    /// 查询后台操作状态；结果只暴露给已通过内部控制面鉴权的调用方。
+    pub(crate) fn operation_status(&mut self, request: &Value) -> Value {
+        self.prune_results();
+        let Some(id) = request.get("operation_id").and_then(Value::as_u64) else {
+            return error_json(
+                "operation_id must be a positive integer",
+                "bad_request",
+                400,
+            );
+        };
+        if id == 0 {
+            return error_json(
+                "operation_id must be a positive integer",
+                "bad_request",
+                400,
+            );
+        }
+        if self.pending.contains(&id) {
+            return accepted_operation_response(id);
+        }
+        self.results
+            .get(&id)
+            .map(|result| result.response.clone())
+            .unwrap_or_else(|| {
+                error_json(
+                    "Operation was not found or has expired",
+                    "operation_not_found",
+                    404,
+                )
+            })
+    }
+
+    fn allocate_id(&mut self) -> u64 {
+        loop {
+            let id = self.next_id;
+            self.next_id = self.next_id.wrapping_add(1).max(1);
+            if !self.pending.contains(&id) && !self.results.contains_key(&id) {
+                return id;
+            }
+        }
+    }
+
+    fn prune_results(&mut self) {
+        self.results
+            .retain(|_, result| result.finished_at.elapsed() <= OPERATION_RESULT_RETENTION);
+        while self.results.len() > OPERATION_RESULT_CAPACITY {
+            let Some(oldest_id) = self
+                .results
+                .iter()
+                .min_by_key(|(_, result)| result.finished_at)
+                .map(|(id, _)| *id)
+            else {
+                break;
+            };
+            self.results.remove(&oldest_id);
+        }
+    }
+}
+
+/// 返回后台操作已受理响应，调用方随后应查询 `operation_status`。
+pub(crate) fn accepted_operation_response(id: u64) -> Value {
+    json!({
+        "accepted": true,
+        "pending": true,
+        "operation_id": id,
+        "operation_state": "pending",
+        "status": 202,
+    })
+}
+
+fn completed_operation_response(id: u64, mut response: Value) -> Value {
+    let Some(object) = response.as_object_mut() else {
+        return json!({
+            "operation_id": id,
+            "pending": false,
+            "operation_state": "completed",
+            "result": response,
+            "status": 200,
+        });
+    };
+    let failed = object
+        .get("status")
+        .and_then(Value::as_i64)
+        .is_some_and(|status| status >= 400)
+        || object
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| !error.is_empty());
+    object.insert("operation_id".to_string(), json!(id));
+    object.insert("pending".to_string(), json!(false));
+    object.insert(
+        "operation_state".to_string(),
+        json!(if failed { "failed" } else { "completed" }),
+    );
+    response
+}
+
+impl BackgroundJobKind {
+    /// 撤销尚未入队的预置状态，避免队列拒绝后更新页永久显示“下载中”。
+    fn cancel_before_start(&self) {
+        if matches!(self, Self::UpdateDownload { .. }) {
+            crate::update::cancel_download_before_start();
+        }
+    }
+}
+
+/// 将可能阻塞的命令转换为不持有 RuntimeView 的后台工作单元。
+pub(crate) fn prepare_background_command(request: &Value, view: &RuntimeView) -> BackgroundCommand {
+    let Some(command) = request.get("command").and_then(Value::as_str) else {
+        return BackgroundCommand::NotBackground;
+    };
+    match command {
+        "update_check" => BackgroundCommand::Job(BackgroundJobKind::UpdateCheck {
+            config: crate::update::request_config(view.settings),
+        }),
+        "update_download" => match crate::update::begin_download() {
+            Ok(()) => BackgroundCommand::Job(BackgroundJobKind::UpdateDownload {
+                app_data_dir: view.app_data_dir(),
+                config: crate::update::request_config(view.settings),
+            }),
+            Err(error) => BackgroundCommand::Reply(error_json(&error, "download_failed", 500)),
+        },
+        "update_install" => BackgroundCommand::Job(BackgroundJobKind::UpdateInstall),
+        "import_mascot_template" => match template_storage_paths() {
+            Ok((storage, cache)) => {
+                let Some(path) = request.get("archive_path").and_then(Value::as_str) else {
+                    return BackgroundCommand::Reply(error_json(
+                        "archive_path must be a string",
+                        "bad_request",
+                        400,
+                    ));
+                };
+                if path.is_empty() {
+                    return BackgroundCommand::Reply(error_json(
+                        "Archive path is required",
+                        "invalid_archive",
+                        400,
+                    ));
+                }
+                BackgroundCommand::Job(BackgroundJobKind::Import {
+                    archive: PathBuf::from(path),
+                    storage,
+                    cache,
+                })
+            }
+            Err(error) => BackgroundCommand::Reply(error),
+        },
+        "reload_templates" => match template_storage_paths() {
+            Ok((storage, cache)) => {
+                BackgroundCommand::Job(BackgroundJobKind::ReloadTemplates { storage, cache })
+            }
+            Err(error) => BackgroundCommand::Reply(error),
+        },
+        "store_index" => BackgroundCommand::Job(BackgroundJobKind::StoreIndex {
+            request: request.clone(),
+        }),
+        "store_install" => {
+            let Some(id) = request.get("id").and_then(Value::as_str) else {
+                return BackgroundCommand::Reply(error_json("id is required", "bad_request", 400));
+            };
+            BackgroundCommand::Job(BackgroundJobKind::StoreInstall { id: id.to_string() })
+        }
+        "store_github_start" => BackgroundCommand::Job(BackgroundJobKind::StoreGitHubStart),
+        "store_github_step" => BackgroundCommand::Job(BackgroundJobKind::StoreGitHubStep),
+        "store_github_status" => BackgroundCommand::Job(BackgroundJobKind::StoreGitHubStatus),
+        "store_github_signout" => BackgroundCommand::Job(BackgroundJobKind::StoreGitHubSignout),
+        "store_submit_mascot" => BackgroundCommand::Job(BackgroundJobKind::StoreSubmit {
+            request: request.clone(),
+        }),
+        "analyze_archive" => BackgroundCommand::Job(BackgroundJobKind::AnalyzeArchive {
+            request: request.clone(),
+        }),
+        "convert_archive" => BackgroundCommand::Job(BackgroundJobKind::ConvertArchive {
+            request: request.clone(),
+        }),
+        _ => BackgroundCommand::NotBackground,
+    }
+}
+
+/// 在主循环应用后台任务的完成事件，并生成原命令的最终响应。
+pub(crate) fn complete_background_command(
+    result: BackgroundResult,
+    view: &mut RuntimeView,
+) -> Value {
+    match result {
+        BackgroundResult::Reply(response) => response,
+        BackgroundResult::Imported(imported) => apply_imported_templates(view, imported),
+        BackgroundResult::Reloaded(templates) => {
+            let names = apply_template_snapshot(view, templates);
+            json!({ "reloaded": true, "templates": names, "count": names.len() })
+        }
+        BackgroundResult::UpdateDownloaded(result) => match result {
+            Ok(downloaded) => match crate::update::persist_downloaded(
+                view.settings,
+                &downloaded.version,
+                &downloaded.path,
+                &downloaded.sha256,
+            ) {
+                Ok(()) => json!({
+                    "downloaded": true,
+                    "version": downloaded.version,
+                    "path": downloaded.path,
+                }),
+                Err(error) => error_json(&error, "settings_failed", 500),
+            },
+            Err(error) => error_json(&error, "download_failed", 500),
+        },
+    }
+}
+
+fn execute_background_job(kind: BackgroundJobKind) -> BackgroundResult {
+    match kind {
+        BackgroundJobKind::UpdateCheck { config } => {
+            let notify = crate::update::run_check_with_config(&config);
+            BackgroundResult::Reply(json!({
+                "checked": true,
+                "notify": notify,
+                "status": crate::update::status_json(),
+            }))
+        }
+        BackgroundJobKind::UpdateDownload {
+            app_data_dir,
+            config,
+        } => BackgroundResult::UpdateDownloaded(crate::update::download_with_config(
+            &app_data_dir,
+            &config,
+        )),
+        BackgroundJobKind::UpdateInstall => BackgroundResult::Reply(
+            crate::update::install()
+                .unwrap_or_else(|error| error_json(&error, "install_failed", 500)),
+        ),
+        BackgroundJobKind::Import {
+            archive,
+            storage,
+            cache,
+        } => match import_mascot_template_job(&archive, &storage, &cache) {
+            Ok(imported) => BackgroundResult::Imported(imported),
+            Err(error) => BackgroundResult::Reply(error),
+        },
+        BackgroundJobKind::ReloadTemplates { storage, cache } => {
+            BackgroundResult::Reloaded(load_template_snapshot(&storage, &cache))
+        }
+        BackgroundJobKind::StoreIndex { request } => {
+            BackgroundResult::Reply(store_index_command(&request))
+        }
+        BackgroundJobKind::StoreInstall { id } => match store_install_job(&id) {
+            Ok(imported) => BackgroundResult::Imported(imported),
+            Err(error) => BackgroundResult::Reply(error),
+        },
+        BackgroundJobKind::StoreGitHubStart => {
+            BackgroundResult::Reply(store_github_start_command())
+        }
+        BackgroundJobKind::StoreGitHubStep => BackgroundResult::Reply(store_github_step_command()),
+        BackgroundJobKind::StoreGitHubStatus => {
+            BackgroundResult::Reply(store_github_status_command())
+        }
+        BackgroundJobKind::StoreGitHubSignout => {
+            BackgroundResult::Reply(store_github_signout_command())
+        }
+        BackgroundJobKind::StoreSubmit { request } => {
+            BackgroundResult::Reply(store_submit_mascot_command(&request))
+        }
+        BackgroundJobKind::AnalyzeArchive { request } => {
+            BackgroundResult::Reply(analyze_archive_command(&request))
+        }
+        BackgroundJobKind::ConvertArchive { request } => {
+            BackgroundResult::Reply(convert_archive_command(&request))
+        }
+        #[cfg(test)]
+        BackgroundJobKind::TestSleep(duration) => {
+            std::thread::sleep(duration);
+            BackgroundResult::Reply(json!({ "ok": true }))
+        }
+    }
+}
+
 /// 从服务线程提交请求并阻塞等待回复。
 pub fn call(tx: &Sender<PendingCommand>, request: Value) -> Value {
     let (reply_tx, reply_rx) = sync_channel::<Value>(1);
+    let (operation_tx, operation_rx) = sync_channel::<u64>(1);
     if tx
         .send(PendingCommand {
             request,
             reply: reply_tx,
+            operation: operation_tx,
         })
         .is_err()
     {
         return error_json("runtime is shutting down", "unavailable", 503);
     }
-    match reply_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-        Ok(value) => value,
-        Err(_) => error_json("command timed out", "timeout", 504),
+    wait_for_command_reply(&reply_rx, &operation_rx, COMMAND_REPLY_TIMEOUT)
+}
+
+/// 等待主线程完成命令；仅已取得后台操作 ID 的超时请求才会返回已受理状态。
+fn wait_for_command_reply(
+    reply_rx: &Receiver<Value>,
+    operation_rx: &Receiver<u64>,
+    timeout: Duration,
+) -> Value {
+    let deadline = Instant::now() + timeout;
+    let mut operation_id = None;
+    loop {
+        if let Ok(value) = reply_rx.try_recv() {
+            return value;
+        }
+        if operation_id.is_none()
+            && let Ok(id) = operation_rx.try_recv()
+        {
+            operation_id = Some(id);
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            return operation_id
+                .map(accepted_operation_response)
+                .unwrap_or_else(|| {
+                    error_json(
+                        "Runtime did not respond before the deadline",
+                        "timeout",
+                        504,
+                    )
+                });
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        let wait = remaining.min(Duration::from_millis(25));
+        match reply_rx.recv_timeout(wait) {
+            Ok(value) => return value,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return error_json("runtime is shutting down", "unavailable", 503);
+            }
+        }
     }
 }
 
@@ -71,6 +674,7 @@ pub fn call(tx: &Sender<PendingCommand>, request: Value) -> Value {
 static UPDATE_NAVIGATE_REQUESTED: std::sync::OnceLock<std::sync::atomic::AtomicBool> =
     std::sync::OnceLock::new();
 
+/// 请求下一次 Manager 心跳跳转到更新页面。
 pub fn request_update_navigate() {
     UPDATE_NAVIGATE_REQUESTED
         .get_or_init(|| std::sync::atomic::AtomicBool::new(false))
@@ -79,6 +683,27 @@ pub fn request_update_navigate() {
 
 fn take_update_navigate() -> bool {
     UPDATE_NAVIGATE_REQUESTED
+        .get_or_init(|| std::sync::atomic::AtomicBool::new(false))
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// "安装更新后退出运行时"请求标志（update::install 设置，主循环消费）。
+static EXIT_AFTER_INSTALL: std::sync::OnceLock<std::sync::atomic::AtomicBool> =
+    std::sync::OnceLock::new();
+
+/// 请求运行时优雅退出：延迟 500ms 再置位，确保 install 响应先发回调用方。
+pub fn request_exit_after_install() {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        EXIT_AFTER_INSTALL
+            .get_or_init(|| std::sync::atomic::AtomicBool::new(false))
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+}
+
+/// 消费一次“安装器已启动，运行时应退出”的请求。
+pub fn take_exit_after_install() -> bool {
+    EXIT_AFTER_INSTALL
         .get_or_init(|| std::sync::atomic::AtomicBool::new(false))
         .swap(false, std::sync::atomic::Ordering::SeqCst)
 }
@@ -118,8 +743,41 @@ pub struct RuntimeView<'a> {
     pub codex_seen: &'a mut std::collections::VecDeque<(String, String, std::time::Instant)>,
     /// 点击 Codex 气泡后请求管理器跳转 Codex 页。
     pub codex_page_requested: &'a mut bool,
+    /// 右键「检查」后请求管理器打开检查器。
+    pub inspect_requested: &'a mut Option<u64>,
+    pub cli_runtime_mode: bool,
+    pub startup_mode: bool,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn normalize_macos_manager_heartbeat_rect(rect: Rect, reference_screen: Option<Rect>) -> Rect {
+    let Some(reference_screen) = reference_screen else {
+        return rect;
+    };
+    Rect {
+        left: rect.left.saturating_add(reference_screen.left),
+        top: rect.top.saturating_add(reference_screen.top),
+        right: rect.right.saturating_add(reference_screen.left),
+        bottom: rect.bottom.saturating_add(reference_screen.top),
+    }
+}
+
+fn normalize_manager_heartbeat_rect(rect: Rect, reference_screen: Option<Rect>) -> Rect {
+    #[cfg(target_os = "macos")]
+    {
+        return normalize_macos_manager_heartbeat_rect(rect, reference_screen);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = reference_screen;
+        rect
+    }
+}
+
+/// 在主循环中执行快速命令。
+///
+/// 调用方必须先通过 [`prepare_background_command`] 分流慢任务，避免网络、解压和
+/// 大文件校验占住 RuntimeView。
 pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
     let Some(command) = request.get("command").and_then(Value::as_str) else {
         return error_json("Missing command", "bad_request", 400);
@@ -133,7 +791,7 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
         }),
         "list_mascots" => list_mascots(view, request),
         "list_loaded_mascots" => list_loaded_mascots(view),
-        "import_mascot_template" => import_mascot_template(view, request),
+        "import_mascot_template" | "reload_templates" => background_dispatch_missed(),
         "remove_mascot_template" => remove_mascot_template(view, request),
         "spawn_mascot" => spawn_mascot(view, request),
         "register_cli_label" => register_cli_label(view, request),
@@ -155,44 +813,55 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
             "version": version::VERSION,
         }),
         "manager_heartbeat" => {
-            // 管理器定期上报窗口矩形：召唤落点跟随管理器所在屏。
+            // 管理器定期上报窗口矩形与可见性：召唤落点跟随管理器所在屏。
+            if let Some(is_visible) = request.get("is_visible").and_then(Value::as_bool) {
+                neurolings_platform::manager_window::report_visibility(is_visible);
+            }
             let x = request.get("x").and_then(Value::as_i64).unwrap_or(0) as i32;
             let y = request.get("y").and_then(Value::as_i64).unwrap_or(0) as i32;
             let width = request.get("width").and_then(Value::as_i64).unwrap_or(0) as i32;
             let height = request.get("height").and_then(Value::as_i64).unwrap_or(0) as i32;
             if width > 0 && height > 0 {
-                *view.manager_rect = Some(neurolings_platform::Rect {
-                    left: x,
-                    top: y,
-                    right: x + width,
-                    bottom: y + height,
-                });
+                // Flutter 插件与 macOS 后端都以 NSScreen 数组首项为参考屏；
+                // 运行时环境则已归一到虚拟桌面左上角，需补回该屏的偏移量。
+                let rect = normalize_manager_heartbeat_rect(
+                    Rect {
+                        left: x,
+                        top: y,
+                        right: x + width,
+                        bottom: y + height,
+                    },
+                    view.envs
+                        .screens
+                        .first()
+                        .map(|screen| screen.screen.monitor),
+                );
+                *view.manager_rect = Some(rect);
             }
             // 携带并消费"跳转 Codex 页"请求（点击 Codex 气泡触发）与
             // "跳转 About 页"请求（启动检查发现新版本触发）。
             let codex_navigate = *view.codex_page_requested;
             *view.codex_page_requested = false;
             let update_navigate = take_update_navigate();
+            let inspect_id = view.inspect_requested.take();
             json!({
                 "ok": true,
                 "codex_navigate": codex_navigate,
                 "update_navigate": update_navigate,
+                "inspect_id": inspect_id,
+                "mascot_count": view.sessions.len(),
+                "template_count": view.templates.names_sorted().len(),
             })
         }
+        "inspect_mascot" => inspect_mascot_command(view, request),
+        "storage_path" => json!({
+            "path": neurolings_pack::storage::default_storage_path()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        }),
         // 以下为运行时扩展命令（管理器与工具链使用）。
         "update_status" => crate::update::status_json(),
-        "update_check" => {
-            let notify = crate::update::run_check(view.settings);
-            json!({ "checked": true, "notify": notify, "status": crate::update::status_json() })
-        }
-        "update_download" => match crate::update::download(&view.app_data_dir(), view.settings) {
-            Ok(v) => v,
-            Err(e) => error_json(&e, "download_failed", 500),
-        },
-        "update_install" => match crate::update::install(view.settings) {
-            Ok(v) => v,
-            Err(e) => error_json(&e, "install_failed", 500),
-        },
+        "update_check" | "update_download" | "update_install" => background_dispatch_missed(),
         "update_ignore" => {
             let version = request.get("version").and_then(Value::as_str).unwrap_or("");
             if version.is_empty() {
@@ -234,13 +903,13 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
         }
         "codex_server_resolve" => codex_server_resolve_command(request),
         "codex_server_input" => codex_server_input_command(request),
-        "store_github_status" => store_github_status_command(),
-        "store_github_start" => store_github_start_command(),
-        "store_github_step" => store_github_step_command(),
-        "store_github_signout" => store_github_signout_command(),
-        "store_submit_mascot" => store_submit_mascot_command(request),
-        "analyze_archive" => analyze_archive_command(request),
-        "convert_archive" => convert_archive_command(request),
+        "store_github_status"
+        | "store_github_start"
+        | "store_github_step"
+        | "store_github_signout" => background_dispatch_missed(),
+        "store_submit_mascot" | "analyze_archive" | "convert_archive" => {
+            background_dispatch_missed()
+        }
         "preview_png" => preview_png(view, request),
         "show_bubble" => show_bubble(view, request),
         "show_codex_notification" => show_codex_notification(view, request),
@@ -257,10 +926,17 @@ pub fn dispatch(request: &Value, view: &mut RuntimeView) -> Value {
         "get_settings" => get_settings_command(view, request),
         "set_settings" => set_settings_command(view, request),
         "store_status" => store_status_command(),
-        "store_index" => store_index_command(view, request),
-        "store_install" => store_install_command(view, request),
+        "store_index" | "store_install" => background_dispatch_missed(),
         _ => error_json("Unknown command", "bad_request", 400),
     }
+}
+
+fn background_dispatch_missed() -> Value {
+    error_json(
+        "background command was not scheduled",
+        "internal_error",
+        500,
+    )
 }
 
 /// 拉起管理器进程（与运行时同目录的可执行文件）。
@@ -287,6 +963,10 @@ pub fn launch_manager() {
         );
         return;
     }
+    let Some(token) = internal_control_token() else {
+        crate::log::error("manager", "internal control token is unavailable");
+        return;
+    };
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -300,6 +980,7 @@ pub fn launch_manager() {
                 "NEUROLINGSCE_MANAGER_PORT",
                 neurolings_common::api::INTERNAL_HTTP_PORT.to_string(),
             )
+            .env(INTERNAL_CONTROL_TOKEN_ENV, token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -312,6 +993,11 @@ pub fn launch_manager() {
     #[cfg(not(windows))]
     {
         let _ = std::process::Command::new(&path)
+            .env(
+                "NEUROLINGSCE_MANAGER_PORT",
+                neurolings_common::api::INTERNAL_HTTP_PORT.to_string(),
+            )
+            .env(INTERNAL_CONTROL_TOKEN_ENV, token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -416,14 +1102,98 @@ fn get_mascot(view: &RuntimeView, request: &Value) -> Value {
     }
 }
 
+fn inspect_mascot_command(view: &RuntimeView, request: &Value) -> Value {
+    let id = request
+        .get("id")
+        .and_then(Value::as_u64)
+        .or_else(|| request.get("mascot_id").and_then(Value::as_u64));
+    let Some(id) = id else {
+        return error_json("id is required", "bad_request", 400);
+    };
+    match view.sessions.iter().find(|s| s.id == id) {
+        Some(session) => json!({
+            "id": id,
+            "name": session.name,
+            "text": crate::runtime::inspector::inspect_text(session),
+        }),
+        None => error_json("No such mascot", "mascot_not_found", 404),
+    }
+}
+
+// ---- 模板 data_id 稳定分配 ----
+//
+// 模板标识契约沿用 ManagerMascotRuntime 的 idCounter：加载时取得递增 id，
+// 运行期间不变，新增模板不会挤占旧 id（原先按名称排序下标当 id，
+// 导入新模板后既有 id 会错位）。默认模板基于最先加载的事实固定为 0。
+struct DataIdRegistry {
+    next: i64,
+    by_name: std::collections::HashMap<String, i64>,
+}
+
+static DATA_IDS: std::sync::OnceLock<std::sync::Mutex<DataIdRegistry>> = std::sync::OnceLock::new();
+
+fn data_id_registry() -> &'static std::sync::Mutex<DataIdRegistry> {
+    DATA_IDS.get_or_init(|| {
+        std::sync::Mutex::new(DataIdRegistry {
+            next: 1,
+            by_name: std::collections::HashMap::new(),
+        })
+    })
+}
+
+/// 为当前模板集中尚无 id 的模板分配递增 id（默认模板固定 0）。
+/// 只增不删：查询路径调用它时不会改变已有映射，保证并发查询期间 id 稳定。
+/// 返回持锁的注册表。
+fn sync_data_ids(templates: &TemplateStore) -> std::sync::MutexGuard<'static, DataIdRegistry> {
+    let mut registry = data_id_registry().lock().unwrap();
+    for name in templates.names_sorted() {
+        if crate::templates::is_default_template(&name) {
+            registry.by_name.entry(name).or_insert(0);
+        } else if !registry.by_name.contains_key(&name) {
+            let next = registry.next;
+            registry.by_name.insert(name, next);
+            registry.next += 1;
+        }
+    }
+    registry
+}
+
+/// 移除指定模板的 id（模板卸载后 id 不复用；同名模板重新加载拿新 id）。
+/// 只按名字定向移除，不做全量比对，避免误删其它注册表使用者的条目。
+fn remove_data_ids<'a>(names: impl IntoIterator<Item = &'a str>) {
+    let mut registry = data_id_registry().lock().unwrap();
+    for name in names {
+        registry.by_name.remove(name);
+    }
+}
+
+/// 模板名 → 稳定 data_id（未登记时返回 -1）。
+pub(crate) fn template_data_id(templates: &TemplateStore, name: &str) -> i64 {
+    sync_data_ids(templates)
+        .by_name
+        .get(name)
+        .copied()
+        .unwrap_or(-1)
+}
+
+/// data_id → 模板名（id 无效或模板已卸载时返回 None）。
+fn template_name_for_data_id(templates: &TemplateStore, id: i64) -> Option<String> {
+    sync_data_ids(templates)
+        .by_name
+        .iter()
+        .find(|(_, data_id)| **data_id == id)
+        .map(|(name, _)| name.clone())
+}
+
 fn list_loaded_mascots(view: &RuntimeView) -> Value {
-    let templates: Vec<Value> = view
-        .templates
-        .names_sorted()
+    // 列表按名称排序以保持 QMap 键序契约，id 取自稳定注册表。
+    let names = view.templates.names_sorted();
+    let registry = sync_data_ids(view.templates);
+    let templates: Vec<Value> = names
         .into_iter()
-        .enumerate()
-        .map(|(id, name)| {
+        .map(|name| {
             let meta = view.templates.metadata(&name).cloned().unwrap_or_default();
+            let id = registry.by_name.get(&name).copied().unwrap_or(-1);
             json!({
                 "id": id,
                 "name": name,
@@ -438,6 +1208,28 @@ fn list_loaded_mascots(view: &RuntimeView) -> Value {
 
 // ---- 生成与修改 ----
 
+/// 解析 anchor 字段：键缺失或为 null 时返回 Ok(None)，遵循 mascotPatchFromJson
+/// 的跳过语义；存在但畸形时返回 bad_request，遵循 parseAnchor 的报错契约。
+fn parse_anchor_patch(object: &Value) -> Result<Option<Vec2>, Value> {
+    match object.get("anchor") {
+        None | Some(Value::Null) => Ok(None),
+        Some(anchor) if !anchor.is_object() => {
+            Err(error_json("anchor must be an object", "bad_request", 400))
+        }
+        Some(anchor) => match (
+            anchor.get("x").and_then(Value::as_f64),
+            anchor.get("y").and_then(Value::as_f64),
+        ) {
+            (Some(x), Some(y)) => Ok(Some(Vec2::new(x, y))),
+            _ => Err(error_json(
+                "anchor must contain numeric x and y",
+                "bad_request",
+                400,
+            )),
+        },
+    }
+}
+
 fn spawn_mascot(view: &mut RuntimeView, request: &Value) -> Value {
     let req = request.get("request");
     let req = req.unwrap_or(request);
@@ -448,22 +1240,20 @@ fn spawn_mascot(view: &mut RuntimeView, request: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let anchor = req.get("anchor").and_then(|a| {
-        let x = a.get("x")?.as_f64()?;
-        let y = a.get("y")?.as_f64()?;
-        Some(Vec2::new(x, y))
-    });
+    let anchor = match parse_anchor_patch(req) {
+        Ok(anchor) => anchor,
+        Err(error) => return error,
+    };
 
-    let template_names = view.templates.names_sorted();
     let spawn_name = match (&name, data_id) {
-        (Some(name), _) => {
-            if !template_names.iter().any(|n| n == name) {
+        (Some(name), _) => match view.templates.resolve(name) {
+            Some(resolved) => resolved.to_string(),
+            None => {
                 return error_json("Invalid mascot name or data ID", "invalid_mascot", 400);
             }
-            name.clone()
-        }
-        (None, Some(id)) => match template_names.get(id as usize) {
-            Some(n) => n.clone(),
+        },
+        (None, Some(id)) => match template_name_for_data_id(view.templates, id) {
+            Some(n) => n,
             None => return error_json("Invalid mascot name or data ID", "invalid_mascot", 400),
         },
         (None, None) => {
@@ -525,15 +1315,13 @@ fn alter_mascot(view: &mut RuntimeView, request: &Value) -> Value {
         return err;
     };
     let patch = request.get("patch").unwrap_or(request);
-    if let Some(anchor) = patch.get("anchor") {
-        if let (Some(x), Some(y)) = (
-            anchor.get("x").and_then(Value::as_f64),
-            anchor.get("y").and_then(Value::as_f64),
-        ) {
-            session.manager.state.borrow_mut().anchor = Vec2::new(x, y);
-        } else {
-            return error_json("anchor must contain numeric x and y", "bad_request", 400);
+    // anchor 为 null/缺失时跳过该字段，其余 patch 照常应用。
+    match parse_anchor_patch(patch) {
+        Ok(Some(anchor)) => {
+            session.manager.state.borrow_mut().anchor = anchor;
         }
+        Ok(None) => {}
+        Err(error) => return error,
     }
     if let Some(behavior) = patch.get("behavior").and_then(Value::as_str)
         && session
@@ -566,6 +1354,7 @@ fn dismiss_mascot(view: &mut RuntimeView, request: &Value) -> Value {
     };
     view.sessions.remove(pos);
     view.labels.retain(|_, mascot_id| *mascot_id != id as u64);
+    maybe_show_manager_after_last_mascot(view);
     json!({})
 }
 
@@ -582,7 +1371,14 @@ fn dismiss_all_mascots(view: &mut RuntimeView, request: &Value) -> Value {
     if selector_empty {
         view.labels.clear();
     }
+    maybe_show_manager_after_last_mascot(view);
     json!({})
+}
+
+fn maybe_show_manager_after_last_mascot(view: &RuntimeView) {
+    if view.sessions.is_empty() && !*view.windowed && !view.cli_runtime_mode && !view.startup_mode {
+        launch_manager();
+    }
 }
 
 // ---- CLI 标签 ----
@@ -664,77 +1460,85 @@ fn get_cli_label(view: &RuntimeView, request: &Value) -> Value {
 
 // ---- 模板导入/移除 ----
 
-fn import_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
-    let Some(path) = request.get("archive_path").and_then(Value::as_str) else {
-        return error_json("archive_path must be a string", "bad_request", 400);
-    };
-    if path.is_empty() {
-        return error_json("Archive path is required", "invalid_archive", 400);
-    }
-    let archive = std::path::Path::new(path);
-    if !archive.is_file() {
-        return error_json("Mascot archive does not exist", "invalid_arguments", 400);
-    }
-
+fn template_storage_paths() -> Result<(PathBuf, PathBuf), Value> {
     let Some(storage) = neurolings_pack::storage::default_storage_path() else {
-        return error_json(
+        return Err(error_json(
             "Could not determine mascot storage directory",
             "storage_unavailable",
             500,
-        );
+        ));
     };
     let cache = storage
         .parent()
-        .map(|p| p.join("mascot-cache"))
+        .map(|path| path.join("mascot-cache"))
         .unwrap_or_else(|| storage.join("mascot-cache"));
-    let _ = std::fs::create_dir_all(&cache);
+    Ok((storage, cache))
+}
 
-    let changed = match neurolings_pack::import_archive(archive, &storage) {
+fn load_template_snapshot(
+    storage: &std::path::Path,
+    cache: &std::path::Path,
+) -> Vec<crate::templates::LoadedTemplate> {
+    let _ = std::fs::create_dir_all(cache);
+    crate::templates::load_from_storage(storage, cache)
+}
+
+fn import_mascot_template_job(
+    archive: &std::path::Path,
+    storage: &std::path::Path,
+    cache: &std::path::Path,
+) -> Result<ImportedTemplates, Value> {
+    if !archive.is_file() {
+        return Err(error_json(
+            "Mascot archive does not exist",
+            "invalid_arguments",
+            400,
+        ));
+    }
+    let changed = match neurolings_pack::import_archive(archive, storage) {
         Ok(changed) if !changed.is_empty() => changed,
-        _ => {
-            return error_json(
+        Ok(_) => {
+            return Err(error_json(
                 "Could not import any mascots from the specified archive",
                 "import_failed",
                 400,
-            );
+            ));
         }
+        Err(error) => return Err(error_json(&error.to_string(), "import_failed", 400)),
     };
+    Ok(ImportedTemplates {
+        changed,
+        templates: load_template_snapshot(storage, cache),
+        store_entry: None,
+    })
+}
 
-    // 重新加载变更的模板：注销旧会话与注册项，从存储重新读取。
-    let mut loaded = Vec::new();
-    let mut any_failed = false;
+fn apply_imported_templates(view: &mut RuntimeView, imported: ImportedTemplates) -> Value {
+    let ImportedTemplates {
+        changed,
+        templates,
+        store_entry,
+    } = imported;
     for name in &changed {
-        view.sessions.retain(|s| &s.name != name);
+        view.sessions.retain(|session| &session.name != name);
         view.labels
-            .retain(|_, id| view.sessions.iter().any(|s| s.id == *id));
-        view.templates.deregister(name);
-        let _ = view.factory.deregister_template(name);
+            .retain(|_, id| view.sessions.iter().any(|session| session.id == *id));
     }
-    let reloaded = crate::templates::load_from_storage(&storage, &cache);
-    for template in reloaded {
-        if !changed.iter().any(|n| n == &template.name) {
-            continue;
-        }
-        view.templates.register(&template);
-        match view.factory.register_template(template.engine_template()) {
-            Ok(()) => {}
-            Err(_) => any_failed = true,
-        }
-    }
+    apply_template_snapshot(view, templates);
 
+    let mut loaded = Vec::new();
     for name in &changed {
-        let Some(meta) = view.templates.metadata(name).cloned() else {
+        let resolved = view
+            .templates
+            .resolve(name)
+            .unwrap_or(name.as_str())
+            .to_string();
+        let Some(meta) = view.templates.metadata(&resolved).cloned() else {
             continue;
         };
-        let id = view
-            .templates
-            .names_sorted()
-            .iter()
-            .position(|n| n == name)
-            .unwrap_or(0);
         loaded.push(json!({
-            "id": id,
-            "name": name,
+            "id": template_data_id(view.templates, &resolved),
+            "name": resolved,
             "version": meta.version,
             "description": meta.description,
             "author": meta.author,
@@ -747,11 +1551,41 @@ fn import_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
             500,
         );
     }
-    let _ = any_failed;
-    // 刷新托盘 Spawn 子菜单
-    #[cfg(windows)]
-    crate::tray::refresh(&view.templates.names_sorted());
-    json!({ "loaded_mascots": loaded })
+    let mut response = json!({ "loaded_mascots": loaded, "imported": loaded.len() });
+    if let Some(entry) = store_entry {
+        response["store_entry"] = entry;
+    }
+    response
+}
+
+/// 把后台完成的磁盘模板快照提交到主线程工厂。
+///
+/// 解压和文件读取已在线程中完成；这里仅做内存注册和必要的会话清理，避免 tick
+/// 持有 RuntimeView 时进行慢 I/O。
+fn apply_template_snapshot(
+    view: &mut RuntimeView,
+    loaded_templates: Vec<crate::templates::LoadedTemplate>,
+) -> Vec<String> {
+    let previous_names = view.templates.names_sorted();
+    let names =
+        crate::templates::apply_loaded_templates(view.templates, view.factory, &loaded_templates);
+    let removed: Vec<String> = previous_names
+        .into_iter()
+        .filter(|name| {
+            !crate::templates::is_default_template(name) && !names.iter().any(|item| item == name)
+        })
+        .collect();
+    if !removed.is_empty() {
+        view.sessions
+            .retain(|session| !removed.iter().any(|name| name == &session.name));
+        view.labels
+            .retain(|_, id| view.sessions.iter().any(|session| session.id == *id));
+        remove_data_ids(removed.iter().map(String::as_str));
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    crate::tray::refresh(&names);
+    names
 }
 
 fn remove_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
@@ -766,10 +1600,7 @@ fn remove_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
             400,
         );
     }
-    if name == crate::templates::DEFAULT_TEMPLATE_NAME
-        || name == "Default"
-        || name == "Default Mascot"
-    {
+    if crate::templates::is_default_template(name) {
         return error_json(
             "Mascot template cannot be deleted",
             "mascot_template_not_deletable",
@@ -782,24 +1613,41 @@ fn remove_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
     let Some(pack_dir) = view.templates.pack_dir(name) else {
         return error_json("No such mascot template", "mascot_template_not_found", 404);
     };
-    // 存储目录外的路径拒绝删除。
+    // 只允许删存储目录或解压缓存里的模板，禁止任意路径。
     let storage = neurolings_pack::storage::default_storage_path().unwrap_or_default();
-    if let (Ok(storage_c), Ok(target_c)) = (storage.canonicalize(), pack_dir.canonicalize())
-        && !target_c.starts_with(&storage_c)
-    {
-        return error_json(
-            "Refusing to delete a mascot outside the storage directory",
-            "invalid_template_path",
-            400,
-        );
+    let cache = storage
+        .parent()
+        .map(|p| p.join("mascot-cache"))
+        .unwrap_or_else(|| storage.join("mascot-cache"));
+    if let Ok(target_c) = pack_dir.canonicalize() {
+        let storage_ok = storage
+            .canonicalize()
+            .is_ok_and(|root| target_c.starts_with(&root));
+        let cache_ok = cache
+            .canonicalize()
+            .is_ok_and(|root| target_c.starts_with(&root));
+        if !storage_ok && !cache_ok {
+            return error_json(
+                "Refusing to delete a mascot outside the storage directory",
+                "invalid_template_path",
+                400,
+            );
+        }
     }
 
-    let removed = if pack_dir.is_dir() {
+    let removed_cache = if pack_dir.is_dir() {
         std::fs::remove_dir_all(&pack_dir)
     } else {
         std::fs::remove_file(&pack_dir)
     };
-    if removed.is_err() {
+    // 缓存目录之外还要删掉存储里的 .mascot，否则刷新会把包再解出来。
+    let package_file = neurolings_pack::package::package_path_for_name(&storage, name);
+    let removed_package = if package_file.is_file() {
+        std::fs::remove_file(&package_file)
+    } else {
+        Ok(())
+    };
+    if removed_cache.is_err() && removed_package.is_err() {
         return error_json("Could not remove mascot template", "remove_failed", 400);
     }
     view.sessions.retain(|s| s.name != name);
@@ -807,7 +1655,8 @@ fn remove_mascot_template(view: &mut RuntimeView, request: &Value) -> Value {
         .retain(|_, id| view.sessions.iter().any(|s| s.id == *id));
     view.templates.deregister(name);
     let _ = view.factory.deregister_template(name);
-    #[cfg(windows)]
+    remove_data_ids([name]);
+    #[cfg(any(windows, target_os = "macos"))]
     crate::tray::refresh(&view.templates.names_sorted());
     json!({})
 }
@@ -1229,13 +2078,24 @@ fn encode_preview_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn preview_png(view: &RuntimeView, request: &Value) -> Value {
-    let Some(id) = request.get("id").and_then(Value::as_i64) else {
-        return error_json("id is required", "bad_request", 400);
+    let name = if let Some(name) = request.get("name").and_then(Value::as_str) {
+        match view.templates.resolve(name) {
+            Some(resolved) => resolved.to_string(),
+            None => {
+                return error_json("No such loaded mascot", "loaded_mascot_not_found", 404);
+            }
+        }
+    } else if let Some(id) = request.get("id").and_then(Value::as_i64) {
+        match template_name_for_data_id(view.templates, id) {
+            Some(name) => name,
+            None => {
+                return error_json("No such loaded mascot", "loaded_mascot_not_found", 404);
+            }
+        }
+    } else {
+        return error_json("id or name is required", "bad_request", 400);
     };
-    let names = view.templates.names_sorted();
-    let Some(name) = names.get(id as usize) else {
-        return error_json("No such loaded mascot", "loaded_mascot_not_found", 404);
-    };
+    let name = name.as_str();
     // 虚拟模板 @ 的预览图直接取内嵌资源；其余模板读包目录。
     let embedded = || -> Option<Vec<u8>> {
         for candidate in ["a.png", "cover.png"] {
@@ -1255,24 +2115,39 @@ fn preview_png(view: &RuntimeView, request: &Value) -> Value {
             })
             .map(|f| f.contents().to_vec())
     };
-    let bytes = if name == crate::templates::DEFAULT_TEMPLATE_NAME {
+    let bytes = if crate::templates::is_default_template(name) {
         embedded()
     } else {
         let Some(img_dir) = view.templates.pack_dir(name).map(|p| p.join("img")) else {
             return error_json("No such loaded mascot", "loaded_mascot_not_found", 404);
         };
-        // 选图优先级与原版一致：a.png → cover.png → 文件名排序后第一张 PNG。
-        let mut candidates: Vec<std::path::PathBuf> =
-            vec![img_dir.join("a.png"), img_dir.join("cover.png")];
+        // 选图优先级遵循既定契约（文件名大小写不敏感）：
+        // a.png → cover.png → 名称排序后第一张 PNG。
+        let mut pngs: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&img_dir) {
-            let mut pngs: Vec<std::path::PathBuf> = entries
+            pngs = entries
                 .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")))
                 .collect();
-            pngs.sort();
-            candidates.extend(pngs);
+            pngs.sort_by_key(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default()
+            });
         }
+        let named = |target: &str| {
+            pngs.iter()
+                .find(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(target))
+                })
+                .cloned()
+        };
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        candidates.extend(named("a.png"));
+        candidates.extend(named("cover.png"));
+        candidates.extend(pngs);
         candidates.iter().find_map(|p| std::fs::read(p).ok())
     };
     match bytes.as_deref().and_then(|b| encode_preview_png(b).ok()) {
@@ -1674,7 +2549,8 @@ fn store_status_command() -> Value {
 }
 
 /// 拉取（或读缓存）商店索引；refresh=true 时强制网络刷新。
-fn store_index_command(view: &mut RuntimeView, request: &Value) -> Value {
+/// 仅由后台 worker 调用，避免网络重试占住主 tick。
+fn store_index_command(request: &Value) -> Value {
     use neurolings_store::{StoreCache, fetch_index};
 
     let refresh = request
@@ -1762,7 +2638,6 @@ fn store_index_command(view: &mut RuntimeView, request: &Value) -> Value {
             url
         ),
     );
-    let _ = view; // 索引命令不改动运行时会话状态。
     store_index_json(&index, false)
 }
 
@@ -1776,41 +2651,51 @@ fn store_index_json(index: &neurolings_store::StoreIndex, from_cache: bool) -> V
     })
 }
 
-/// 商店安装：按 id 找条目 → 受信 URL 校验 → SHA-256 下载 → 复用
-/// import_mascot_template 导入 → 返回导入结果。
-fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
+/// 商店安装后台工作：按 id 找条目、下载并导入，完成后返回待主线程提交的模板快照。
+fn store_install_job(id: &str) -> Result<ImportedTemplates, Value> {
     use neurolings_store::{StoreCache, download};
 
-    let Some(id) = request.get("id").and_then(Value::as_str) else {
-        return error_json("id is required", "bad_request", 400);
-    };
     let Some(dir) = store_cache_dir() else {
-        return error_json("Storage unavailable", "storage_unavailable", 500);
+        return Err(error_json(
+            "Storage unavailable",
+            "storage_unavailable",
+            500,
+        ));
     };
     let cache = StoreCache::new(&dir);
     let Some(cached) = cache.load_index().or_else(|| cache.load_previous_index()) else {
-        return error_json(
+        return Err(error_json(
             "Store index not fetched yet; refresh first",
             "store_empty",
             409,
-        );
+        ));
     };
     let index = match neurolings_store::StoreIndex::parse(&cached.body) {
         Ok(v) => v,
-        Err(e) => return error_json(&format!("Invalid cached index: {e}"), "invalid_index", 500),
+        Err(error) => {
+            return Err(error_json(
+                &format!("Invalid cached index: {error}"),
+                "invalid_index",
+                500,
+            ));
+        }
     };
-    let Some(entry) = index.entries.iter().find(|e| e.id == id) else {
-        return error_json("No such store entry", "entry_not_found", 404);
+    let Some(entry) = index.entries.iter().find(|entry| entry.id == id).cloned() else {
+        return Err(error_json("No such store entry", "entry_not_found", 404));
     };
     if entry.download.url.is_empty() {
-        return error_json("Entry has no download URL", "invalid_entry", 400);
+        return Err(error_json(
+            "Entry has no download URL",
+            "invalid_entry",
+            400,
+        ));
     }
     if !neurolings_store::index::is_trusted_download_url(&entry.download.url, &index.registry) {
-        return error_json(
+        return Err(error_json(
             "Download URL is not from a trusted host",
             "untrusted_url",
             400,
-        );
+        ));
     }
 
     // 原版命名：sanitized(id) + "-" + version + ".mascot"，避免 URL 尾段污染与重名
@@ -1857,16 +2742,17 @@ fn store_install_command(view: &mut RuntimeView, request: &Value) -> Value {
         }
     }
     if !ok {
-        return error_json(&last_err, "download_failed", 502);
+        return Err(error_json(&last_err, "download_failed", 502));
     }
 
-    let mut import_request = json!({ "archive_path": destination.to_string_lossy() });
-    if let Some(label) = request.get("label") {
-        import_request["label"] = label.clone();
-    }
-    let mut result = import_mascot_template(view, &import_request);
-    result["store_entry"] = json!({ "id": entry.id, "name": entry.name, "version": entry.version });
-    result
+    let (storage, template_cache) = template_storage_paths()?;
+    let mut imported = import_mascot_template_job(&destination, &storage, &template_cache)?;
+    imported.store_entry = Some(json!({
+        "id": entry.id,
+        "name": entry.name,
+        "version": entry.version,
+    }));
+    Ok(imported)
 }
 
 fn set_window_mode(view: &mut RuntimeView, request: &Value) -> Value {
@@ -1880,10 +2766,16 @@ fn set_window_mode(view: &mut RuntimeView, request: &Value) -> Value {
 
 fn get_settings_command(view: &RuntimeView, request: &Value) -> Value {
     // 指定 key 时只返回该项。
-    if let Some(key) = request.get("key").and_then(Value::as_str)
-        && let Some(value) = view.settings.get(key)
-    {
-        return json!({ "key": key, "value": value });
+    if let Some(key) = request.get("key").and_then(Value::as_str) {
+        if key == crate::settings::KEY_PROXY_PASS {
+            return json!({
+                "key": key,
+                "configured": setting_has_non_empty_string(view.settings, key),
+            });
+        }
+        if let Some(value) = view.settings.get(key) {
+            return json!({ "key": key, "value": value });
+        }
     }
     // 否则返回全部设置快照。
     let mut out = serde_json::Map::new();
@@ -1907,11 +2799,23 @@ fn get_settings_command(view: &RuntimeView, request: &Value) -> Value {
         crate::settings::KEY_WINDOWED_BG,
         crate::settings::KEY_UPDATE_CHECK,
         crate::settings::KEY_LANGUAGE,
+        crate::settings::KEY_PROXY_MODE,
+        crate::settings::KEY_PROXY_HOST,
+        crate::settings::KEY_PROXY_PORT,
+        crate::settings::KEY_PROXY_USER,
     ] {
         if let Some(value) = view.settings.get(key) {
             out.insert(key.to_string(), value.clone());
         }
     }
+    out.insert(
+        "update/proxyPasswordConfigured".to_string(),
+        json!(setting_has_non_empty_string(
+            view.settings,
+            crate::settings::KEY_PROXY_PASS
+        )),
+    );
+    out.insert("windowed".to_string(), json!(*view.windowed));
     Value::Object(out)
 }
 
@@ -1927,14 +2831,286 @@ fn set_settings_command(view: &mut RuntimeView, request: &Value) -> Value {
             // 语言变化时同步托盘菜单文案（右键菜单下次构建即生效）。
             if key == crate::settings::KEY_LANGUAGE {
                 let locale = view.settings.locale();
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 {
                     crate::tray::set_locale(locale);
                     crate::tray::refresh(&view.templates.names_sorted());
                 }
             }
-            json!({ "key": key, "value": value })
+            if key == crate::settings::KEY_PROXY_PASS {
+                json!({
+                    "key": key,
+                    "configured": value.as_str().is_some_and(|text| !text.is_empty()),
+                })
+            } else {
+                json!({ "key": key, "value": value })
+            }
         }
         Err(e) => error_json(&e, "settings_failed", 500),
+    }
+}
+
+fn setting_has_non_empty_string(settings: &crate::settings::Settings, key: &str) -> bool {
+    settings
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::templates::LoadedTemplate;
+
+    fn register(store: &mut TemplateStore, name: &str) {
+        store.register(&LoadedTemplate {
+            name: name.to_string(),
+            dir: std::path::PathBuf::new(),
+            actions_xml: String::new(),
+            behaviors_xml: String::new(),
+            metadata: Default::default(),
+            virtual_: true,
+        });
+    }
+
+    /// Manager 显式传入的令牌必须是完整 256 位值；缺失时才允许安全生成。
+    #[test]
+    fn internal_control_token_rejects_invalid_supplied_value() {
+        let generated = generate_internal_control_token().unwrap();
+        assert_eq!(generated.len(), 43);
+        assert!(valid_internal_control_token(&generated));
+        assert_eq!(
+            select_internal_control_token(Some(generated.clone())).unwrap(),
+            generated
+        );
+        assert!(select_internal_control_token(Some("invalid".to_string())).is_err());
+    }
+
+    /// worker 睡眠期间主线程仍可推进；调用方断开后完成事件仍保留到主线程提交。
+    #[test]
+    fn background_job_does_not_block_ticks_or_drop_disconnected_completion() {
+        let mut jobs = BackgroundJobs::new();
+        let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+        let operation_id = jobs
+            .submit(
+                BackgroundJobKind::TestSleep(std::time::Duration::from_millis(80)),
+                &reply_tx,
+            )
+            .unwrap();
+        assert_eq!(
+            jobs.operation_status(&json!({ "operation_id": operation_id }))["pending"],
+            true
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(20);
+        let mut ticks = 0;
+        while std::time::Instant::now() < deadline {
+            ticks += 1;
+            assert!(jobs.try_recv().is_none());
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(ticks > 0);
+
+        let completion_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let completion = loop {
+            if let Some(completion) = jobs.try_recv() {
+                break completion;
+            }
+            assert!(std::time::Instant::now() < completion_deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        assert!(matches!(
+            completion.result,
+            BackgroundResult::Reply(ref value) if value["ok"] == true
+        ));
+
+        // 模拟服务线程已在等待窗口后断开：主循环仍会先提交状态并保留最终结果。
+        jobs.finish(completion.id, json!({ "committed": true }));
+        let status = jobs.operation_status(&json!({ "operation_id": operation_id }));
+        assert_eq!(status["operation_id"], operation_id);
+        assert_eq!(status["pending"], false);
+        assert_eq!(status["operation_state"], "completed");
+        assert_eq!(status["committed"], true);
+        drop(reply_rx);
+        let reply = jobs.take_reply(completion.id).unwrap();
+        assert!(reply.send(json!({ "committed": true })).is_err());
+    }
+
+    /// 仅任务已分配稳定 ID 时，等待超时才允许返回“已受理”。
+    #[test]
+    fn command_timeout_is_reported_as_pending() {
+        let (_reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+        let (operation_tx, operation_rx) = std::sync::mpsc::sync_channel(1);
+        operation_tx.send(41).unwrap();
+        let response = wait_for_command_reply(
+            &reply_rx,
+            &operation_rx,
+            std::time::Duration::from_millis(1),
+        );
+        assert_eq!(response["status"], 202);
+        assert_eq!(response["accepted"], true);
+        assert_eq!(response["pending"], true);
+        assert_eq!(response["operation_id"], 41);
+        assert_eq!(response["operation_state"], "pending");
+        assert!(response.get("state").is_none());
+        assert!(response.get("error").is_none());
+    }
+
+    /// 主循环未确认受理的命令超时必须报错，避免 Manager 轮询不存在的操作。
+    #[test]
+    fn command_timeout_without_operation_id_is_failure() {
+        let (_reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+        let (_operation_tx, operation_rx) = std::sync::mpsc::sync_channel(1);
+        let response = wait_for_command_reply(
+            &reply_rx,
+            &operation_rx,
+            std::time::Duration::from_millis(1),
+        );
+        assert_eq!(response["status"], 504);
+        assert_eq!(response["code"], "timeout");
+        assert_ne!(response["pending"], true);
+    }
+
+    /// 已完成的后台失败必须保留原始错误状态，供 Manager 正确展示。
+    #[test]
+    fn completed_operation_preserves_failure_response() {
+        let mut jobs = BackgroundJobs::new();
+        jobs.finish(
+            52,
+            error_json("package signature is invalid", "invalid_archive", 422),
+        );
+
+        let response = jobs.operation_status(&json!({ "operation_id": 52 }));
+        assert_eq!(response["status"], 422);
+        assert_eq!(response["error"], "package signature is invalid");
+        assert_eq!(response["pending"], false);
+        assert_eq!(response["operation_state"], "failed");
+    }
+
+    /// 操作协议状态不得覆盖后台命令自身的状态字段。
+    #[test]
+    fn completed_operation_preserves_business_state() {
+        let mut jobs = BackgroundJobs::new();
+        for (id, state) in [(53, "pending"), (54, "authorized")] {
+            jobs.finish(id, json!({ "state": state }));
+            let response = jobs.operation_status(&json!({ "operation_id": id }));
+            assert_eq!(response["state"], state);
+            assert_eq!(response["operation_state"], "completed");
+            assert_eq!(response["pending"], false);
+        }
+    }
+
+    /// #3b/#3c：anchor 缺失或为 null 时跳过，不报错。
+    #[test]
+    fn anchor_null_or_missing_is_skipped() {
+        assert_eq!(parse_anchor_patch(&json!({})).unwrap(), None);
+        assert_eq!(parse_anchor_patch(&json!({"anchor": null})).unwrap(), None);
+        // 其余字段存在与否不影响 anchor 判定。
+        assert_eq!(
+            parse_anchor_patch(&json!({"anchor": null, "behavior": "x"})).unwrap(),
+            None
+        );
+    }
+
+    /// #3b：anchor 存在但畸形时返回 bad_request。
+    #[test]
+    fn anchor_malformed_is_bad_request() {
+        for body in [
+            json!({"anchor": {"x": 1}}),
+            json!({"anchor": {"x": 1, "y": "top"}}),
+            json!({"anchor": "left"}),
+        ] {
+            let err = parse_anchor_patch(&body).unwrap_err();
+            assert_eq!(err.get("status").and_then(Value::as_i64), Some(400));
+            assert_eq!(err.get("code").and_then(Value::as_str), Some("bad_request"));
+        }
+    }
+
+    #[test]
+    fn anchor_valid_parses() {
+        let anchor = parse_anchor_patch(&json!({"anchor": {"x": 1.5, "y": -2}}))
+            .unwrap()
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (1.5, -2.0));
+    }
+
+    /// #2：新增排序更靠前的模板不改变已有模板的 data_id。
+    #[test]
+    fn data_ids_stay_stable_when_new_template_added() {
+        let mut store = TemplateStore::new();
+        register(&mut store, "TestStableIdBeta");
+        register(&mut store, "TestStableIdDelta");
+        let beta = template_data_id(&store, "TestStableIdBeta");
+        let delta = template_data_id(&store, "TestStableIdDelta");
+        assert!(beta > 0 && delta > 0 && beta != delta);
+
+        register(&mut store, "TestStableIdAlpha");
+        assert_eq!(template_data_id(&store, "TestStableIdBeta"), beta);
+        assert_eq!(template_data_id(&store, "TestStableIdDelta"), delta);
+        let alpha = template_data_id(&store, "TestStableIdAlpha");
+        assert!(alpha > beta && alpha > delta);
+        assert_eq!(
+            template_name_for_data_id(&store, beta).as_deref(),
+            Some("TestStableIdBeta")
+        );
+    }
+
+    /// #2：卸载后 id 不复用；同名模板重新注册拿到新 id。
+    #[test]
+    fn data_id_not_reused_after_removal() {
+        let mut store = TemplateStore::new();
+        register(&mut store, "TestReuseGone");
+        register(&mut store, "TestReuseStay");
+        let gone = template_data_id(&store, "TestReuseGone");
+        let stay = template_data_id(&store, "TestReuseStay");
+
+        store.deregister("TestReuseGone");
+        remove_data_ids(["TestReuseGone"]);
+        assert_eq!(template_data_id(&store, "TestReuseStay"), stay);
+        assert_eq!(template_name_for_data_id(&store, gone), None);
+
+        register(&mut store, "TestReuseGone");
+        let reassigned = template_data_id(&store, "TestReuseGone");
+        assert_ne!(reassigned, gone);
+        assert_eq!(template_data_id(&store, "TestReuseStay"), stay);
+    }
+
+    /// #2：默认模板固定为 id 0，保持最先加载时 idCounter=0 的契约。
+    #[test]
+    fn default_template_id_is_zero() {
+        let mut store = TemplateStore::new();
+        register(&mut store, "TestDefaultZeroExtra");
+        register(&mut store, crate::templates::DEFAULT_TEMPLATE_NAME);
+        assert_eq!(
+            template_data_id(&store, crate::templates::DEFAULT_TEMPLATE_NAME),
+            0
+        );
+        assert!(template_data_id(&store, "TestDefaultZeroExtra") > 0);
+    }
+
+    #[test]
+    fn macos_manager_heartbeat_uses_virtual_desktop_coordinates() {
+        let heartbeat = Rect {
+            left: 100,
+            top: 40,
+            right: 1100,
+            bottom: 720,
+        };
+        // 参考屏左侧与上方各有一块显示器时，其在虚拟桌面中不再从零开始。
+        let reference_screen = Rect {
+            left: 1920,
+            top: 1080,
+            right: 3840,
+            bottom: 2160,
+        };
+        assert_eq!(
+            normalize_macos_manager_heartbeat_rect(heartbeat, Some(reference_screen)),
+            Rect {
+                left: 2020,
+                top: 1120,
+                right: 3020,
+                bottom: 1800,
+            }
+        );
     }
 }

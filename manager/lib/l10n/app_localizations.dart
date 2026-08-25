@@ -149,13 +149,13 @@ abstract class AppLocalizations {
   /// No description provided for @closeConfirmTitle.
   ///
   /// In en, this message translates to:
-  /// **'Close NeurolingsCE?'**
+  /// **'Close NeurolingsCE'**
   String get closeConfirmTitle;
 
   /// No description provided for @closeConfirmBody.
   ///
   /// In en, this message translates to:
-  /// **'Do you want to close NeurolingsCE? All mascots will be dismissed.'**
+  /// **'Do you want to close NeurolingsCE?'**
   String get closeConfirmBody;
 
   /// No description provided for @closeKeepOpen.
@@ -332,11 +332,47 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get close;
 
+  /// No description provided for @homeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Mascot Manager'**
+  String get homeTitle;
+
+  /// No description provided for @homePageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Browse your mascot library, start companions, and manage installed packages.'**
+  String get homePageDescription;
+
   /// No description provided for @homeSelectTemplate.
   ///
   /// In en, this message translates to:
-  /// **'Select a mascot to see details.'**
+  /// **'No mascot selected'**
   String get homeSelectTemplate;
+
+  /// No description provided for @statusBar.
+  ///
+  /// In en, this message translates to:
+  /// **'  Mascots: {mascots}  |  Templates: {templates}'**
+  String statusBar(int mascots, int templates);
+
+  /// No description provided for @inspectorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Inspector — {name}'**
+  String inspectorTitle(Object name);
+
+  /// No description provided for @inspectorClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close inspector'**
+  String get inspectorClose;
+
+  /// No description provided for @combinationsOfflineHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Ensure the runtime is running.'**
+  String get combinationsOfflineHint;
 
   /// No description provided for @homeImportDone.
   ///
@@ -967,6 +1003,138 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Third-party'**
   String get aboutThirdParty;
+
+  /// No description provided for @storeIndex.
+  ///
+  /// In en, this message translates to:
+  /// **'Store index'**
+  String get storeIndex;
+
+  /// No description provided for @storeNotConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'(not configured)'**
+  String get storeNotConfigured;
+
+  /// No description provided for @storeRuntimeOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime offline'**
+  String get storeRuntimeOffline;
+
+  /// No description provided for @storeRuntimeOfflineHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Start the runtime from Home before browsing the store.'**
+  String get storeRuntimeOfflineHint;
+
+  /// No description provided for @storeUnconfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Store is not configured'**
+  String get storeUnconfigured;
+
+  /// No description provided for @storeUnconfiguredHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Set NEUROLINGSCE_MASCOT_INDEX_URL to a store index URL and restart the runtime.'**
+  String get storeUnconfiguredHint;
+
+  /// No description provided for @storeLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load the index'**
+  String get storeLoadFailed;
+
+  /// No description provided for @storeCacheWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache warning'**
+  String get storeCacheWarning;
+
+  /// No description provided for @storeSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name, summary, ID, or author...'**
+  String get storeSearchHint;
+
+  /// No description provided for @storeAllTags.
+  ///
+  /// In en, this message translates to:
+  /// **'All tags'**
+  String get storeAllTags;
+
+  /// No description provided for @storeEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No mascot packages in the store'**
+  String get storeEmpty;
+
+  /// No description provided for @storeNoMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No mascots match your filters'**
+  String get storeNoMatch;
+
+  /// No description provided for @storeCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} mascots'**
+  String storeCount(int count);
+
+  /// No description provided for @storeTag.
+  ///
+  /// In en, this message translates to:
+  /// **'tag: {tag}'**
+  String storeTag(Object tag);
+
+  /// No description provided for @storeFromCache.
+  ///
+  /// In en, this message translates to:
+  /// **'from cache'**
+  String get storeFromCache;
+
+  /// No description provided for @storeDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get storeDetails;
+
+  /// No description provided for @storeInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install'**
+  String get storeInstall;
+
+  /// No description provided for @storeAuthors.
+  ///
+  /// In en, this message translates to:
+  /// **'Authors: {names}'**
+  String storeAuthors(Object names);
+
+  /// No description provided for @storeMinVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimum version: {version}'**
+  String storeMinVersion(Object version);
+
+  /// No description provided for @storeInstallOk.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed: {name}'**
+  String storeInstallOk(Object name);
+
+  /// No description provided for @storeInstallOkHint.
+  ///
+  /// In en, this message translates to:
+  /// **'SHA-256 verified and imported. Summon it from Home.'**
+  String get storeInstallOkHint;
+
+  /// No description provided for @storeInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Install failed: {name}'**
+  String storeInstallFailed(Object name);
 
   /// No description provided for @storeCommunity.
   ///

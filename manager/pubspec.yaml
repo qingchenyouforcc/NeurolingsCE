@@ -44,6 +44,7 @@ dependencies:
   intl: any
   path: ^1.9.0
   url_launcher: ^6.2.5
+  desktop_drop: ^0.4.4
 
 dev_dependencies:
   flutter_test:

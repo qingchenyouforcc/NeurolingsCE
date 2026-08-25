@@ -12,11 +12,13 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, W
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BLENDFUNCTION, CreateCompatibleDC,
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, EnumDisplayMonitors, GetDC,
-    GetMonitorInfoW, HMONITOR, MONITORINFO, ReleaseDC, SelectObject,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    MonitorFromPoint, MonitorFromRect, MonitorFromWindow, ReleaseDC, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, GetDpiForWindow,
+    MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -24,9 +26,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DestroyMenu, DispatchMessageW, GWLP_USERDATA, GetClassNameW, GetCursorPos, GetDesktopWindow,
     GetForegroundWindow, GetMessagePos, GetShellWindow, GetSystemMetrics, GetWindowLongPtrW,
     GetWindowRect, GetWindowThreadProcessId, HMENU, IsIconic, IsWindow, IsWindowVisible,
-    MB_ICONINFORMATION, MB_OK, MB_SYSTEMMODAL, MB_TOPMOST, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MONITORINFOF_PRIMARY, MSG, MessageBoxW, PM_REMOVE, PeekMessageW, RegisterClassExW,
-    SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
+    MB_ICONINFORMATION, MB_OK, MB_TOPMOST, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MONITORINFOF_PRIMARY, MSG, MessageBoxW, PM_REMOVE, PeekMessageW, RegisterClassExW, SM_CXSCREEN,
+    SM_CYSCREEN, SPI_GETWORKAREA, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
     SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW,
     TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, ULW_ALPHA,
     UpdateLayeredWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_DESTROY, WM_LBUTTONDBLCLK,
@@ -58,6 +60,131 @@ fn window_registry() -> &'static Mutex<Vec<usize>> {
 }
 
 const CLASS_NAME: PCWSTR = w!("NeurolingsRSMascotWindow");
+
+/// 主显示器 DPI，作为取不到所在显示器 DPI 时的兜底。
+fn desktop_dpi() -> u32 {
+    unsafe {
+        let monitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
+        monitor_dpi(monitor)
+    }
+}
+
+/// 显示器有效 DPI；失败时回退桌面窗口 DPI，再不行取 96。
+fn monitor_dpi(monitor: HMONITOR) -> u32 {
+    unsafe {
+        let mut x = 0u32;
+        let mut y = 0u32;
+        if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y).is_ok() && x > 0 {
+            return x;
+        }
+        let dpi = GetDpiForWindow(GetDesktopWindow());
+        if dpi == 0 { 96 } else { dpi }
+    }
+}
+
+/// 显示器缩放：物理像素 / 96-DPI 逻辑像素。
+fn monitor_scale(monitor: HMONITOR) -> f64 {
+    monitor_dpi(monitor) as f64 / 96.0
+}
+
+/// 物理像素 → 96-DPI 逻辑像素，scale 取该坐标**所在显示器**的倍率。
+fn to_logical_with(v: i32, scale: f64) -> i32 {
+    if !scale.is_finite() || scale <= 0.0 || scale == 1.0 {
+        v
+    } else {
+        (v as f64 / scale).round() as i32
+    }
+}
+
+/// 96-DPI 逻辑像素 → 物理像素，scale 取目标显示器的倍率。
+fn to_physical_with(v: i32, scale: f64) -> i32 {
+    if !scale.is_finite() || scale <= 0.0 || scale == 1.0 {
+        v
+    } else {
+        (v as f64 * scale).round() as i32
+    }
+}
+
+/// 物理矩形 → 逻辑矩形，scale 必须为该显示器自身的倍率（逐屏换算，
+/// 逻辑坐标系全局统一，对齐 Qt：逻辑 = 物理 ÷ 所在屏 scale）。
+fn rect_to_logical_with(r: RECT, scale: f64) -> Rect {
+    Rect {
+        left: to_logical_with(r.left, scale),
+        top: to_logical_with(r.top, scale),
+        right: to_logical_with(r.right, scale),
+        bottom: to_logical_with(r.bottom, scale),
+    }
+}
+
+/// 物理屏幕点所在显示器的缩放（光标、鼠标事件的全局坐标用）。
+fn scale_at_physical_point(p: POINT) -> f64 {
+    unsafe { monitor_scale(MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST)) }
+}
+
+/// 逻辑屏幕点所在显示器的缩放：逐屏把物理矩形按各自倍率换成逻辑矩形后
+/// 做包含判断；点落在屏间逻辑缝隙（混合 DPI 下相邻屏逻辑矩形不一定拼合）
+/// 时回退主屏。
+fn scale_at_logical_point(p: Point) -> f64 {
+    unsafe {
+        let mut monitors: Vec<HMONITOR> = Vec::new();
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(monitor_enum_proc),
+            LPARAM(&mut monitors as *mut Vec<HMONITOR> as isize),
+        );
+        for handle in &monitors {
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(*handle, &mut mi).as_bool() {
+                continue;
+            }
+            let scale = monitor_scale(*handle);
+            if rect_to_logical_with(mi.rcMonitor, scale).contains(p) {
+                return scale;
+            }
+        }
+        desktop_dpi() as f64 / 96.0
+    }
+}
+
+/// 把预乘 BGRA 位图按最近邻放大到目标尺寸（像素风桌宠，避免平滑带来的糊边）。
+fn scale_bgra_nearest(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+    let mut out = vec![0u8; dw as usize * dh as usize * 4];
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return out;
+    }
+    for y in 0..dh {
+        let sy = y * sh / dh;
+        for x in 0..dw {
+            let sx = x * sw / dw;
+            let si = ((sy * sw + sx) * 4) as usize;
+            let di = ((y * dw + x) * 4) as usize;
+            out[di..di + 4].copy_from_slice(&src[si..si + 4]);
+        }
+    }
+    out
+}
+
+/// 将 Windows 鼠标消息映射为运行时事件。
+///
+/// 双击消息替代第二次 `WM_LBUTTONDOWN` 到达；先补发按下事件，才能让随后的
+/// `WM_LBUTTONUP` 正常结束点击手势，再单独通知繁殖逻辑。
+fn mouse_event_kinds(msg: u32) -> Option<(MascotEventKind, Option<MascotEventKind>)> {
+    match msg {
+        WM_LBUTTONDOWN => Some((MascotEventKind::LeftDown, None)),
+        WM_LBUTTONUP => Some((MascotEventKind::LeftUp, None)),
+        WM_LBUTTONDBLCLK => Some((
+            MascotEventKind::LeftDown,
+            Some(MascotEventKind::LeftDoubleClick),
+        )),
+        WM_MOUSEMOVE => Some((MascotEventKind::Move, None)),
+        WM_RBUTTONUP => Some((MascotEventKind::RightUp, None)),
+        _ => None,
+    }
+}
 
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe extern "system" fn wnd_proc(
@@ -109,28 +236,43 @@ unsafe extern "system" fn wnd_proc(
                     } else if msg == WM_LBUTTONUP {
                         let _ = ReleaseCapture();
                     }
-                    let local = Point::new(
-                        (lparam.0 & 0xFFFF) as i16 as i32,
-                        ((lparam.0 >> 16) & 0xFFFF) as i16 as i32,
-                    );
-                    let pos = GetMessagePos();
-                    let screen = Point::new(
-                        (pos & 0xFFFF) as i16 as i32,
-                        ((pos >> 16) & 0xFFFF) as i16 as i32,
-                    );
-                    let kind = match msg {
-                        WM_LBUTTONDOWN => MascotEventKind::LeftDown,
-                        WM_LBUTTONUP => MascotEventKind::LeftUp,
-                        WM_LBUTTONDBLCLK => MascotEventKind::LeftDoubleClick,
-                        WM_MOUSEMOVE => MascotEventKind::Move,
-                        _ => MascotEventKind::RightUp,
+                    // 客户区坐标是窗口当前 DPI 下的物理像素，按窗口所在屏
+                    // 的倍率换算成逻辑像素交给引擎。
+                    let win_dpi = GetDpiForWindow(hwnd);
+                    let win_scale = if win_dpi == 0 {
+                        1.0
+                    } else {
+                        win_dpi as f64 / 96.0
                     };
-                    event_queue().lock().unwrap().push_back(MascotEvent {
+                    let local = Point::new(
+                        to_logical_with((lparam.0 & 0xFFFF) as i16 as i32, win_scale),
+                        to_logical_with(((lparam.0 >> 16) & 0xFFFF) as i16 as i32, win_scale),
+                    );
+                    // GetCursorPos 是完整 32 位屏幕坐标，避免 GetMessagePos 的 16 位截断。
+                    let mut cursor = POINT::default();
+                    let _ = GetCursorPos(&mut cursor);
+                    let cursor_scale = scale_at_physical_point(cursor);
+                    let screen = Point::new(
+                        to_logical_with(cursor.x, cursor_scale),
+                        to_logical_with(cursor.y, cursor_scale),
+                    );
+                    let Some((kind, follow_up)) = mouse_event_kinds(msg) else {
+                        return DefWindowProcW(hwnd, msg, wparam, lparam);
+                    };
+                    let mascot_event = MascotEvent {
                         mascot_id,
                         kind,
                         screen,
                         local,
-                    });
+                    };
+                    let mut queue = event_queue().lock().unwrap();
+                    queue.push_back(mascot_event);
+                    if let Some(kind) = follow_up {
+                        queue.push_back(MascotEvent {
+                            kind,
+                            ..mascot_event
+                        });
+                    }
                 }
                 LRESULT(0)
             }
@@ -276,24 +418,21 @@ impl MascotBackend for WindowsBackend {
                 if !GetMonitorInfoW(*handle, &mut mi).as_bool() {
                     continue;
                 }
-                let monitor = Rect {
-                    left: mi.rcMonitor.left,
-                    top: mi.rcMonitor.top,
-                    right: mi.rcMonitor.right,
-                    bottom: mi.rcMonitor.bottom,
-                };
-                let work_area = Rect {
-                    left: mi.rcWork.left,
-                    top: mi.rcWork.top,
-                    right: mi.rcWork.right,
-                    bottom: mi.rcWork.bottom,
-                };
+                // 逐屏 DPI：每台的物理矩形除以各自的倍率得到统一逻辑矩形。
+                let scale = monitor_scale(*handle);
+                let monitor = rect_to_logical_with(mi.rcMonitor, scale);
+                let work_area = rect_to_logical_with(mi.rcWork, scale);
                 if mi.dwFlags & MONITORINFOF_PRIMARY != 0 {
                     primary = monitor;
                 }
-                infos.push(ScreenInfo { monitor, work_area });
+                infos.push(ScreenInfo {
+                    monitor,
+                    work_area,
+                    scale,
+                });
             }
             if infos.is_empty() {
+                let scale = desktop_dpi() as f64 / 96.0;
                 let width = GetSystemMetrics(SM_CXSCREEN);
                 let height = GetSystemMetrics(SM_CYSCREEN);
                 let mut work = RECT::default();
@@ -303,20 +442,19 @@ impl MascotBackend for WindowsBackend {
                     Some(std::ptr::addr_of_mut!(work).cast::<std::ffi::c_void>()),
                     Default::default(),
                 );
-                let work_area = Rect {
-                    left: work.left,
-                    top: work.top,
-                    right: work.right,
-                    bottom: work.bottom,
-                };
+                let work_area = rect_to_logical_with(work, scale);
                 let monitor = Rect {
                     left: 0,
                     top: 0,
-                    right: width,
-                    bottom: height,
+                    right: to_logical_with(width, scale),
+                    bottom: to_logical_with(height, scale),
                 };
                 primary = monitor;
-                infos.push(ScreenInfo { monitor, work_area });
+                infos.push(ScreenInfo {
+                    monitor,
+                    work_area,
+                    scale,
+                });
             }
             // 主显示器排最前，运行时的默认环境取第一项。
             infos.sort_by_key(|s| if s.monitor == primary { 0 } else { 1 });
@@ -329,7 +467,9 @@ impl MascotBackend for WindowsBackend {
         unsafe {
             let _ = GetCursorPos(&mut p);
         }
-        Point::new(p.x, p.y)
+        // 光标所在屏的倍率换算成逻辑像素。
+        let scale = scale_at_physical_point(p);
+        Point::new(to_logical_with(p.x, scale), to_logical_with(p.y, scale))
     }
 
     fn pump_events(&mut self) -> Vec<MascotEvent> {
@@ -356,11 +496,14 @@ impl MascotBackend for WindowsBackend {
             if !owner.is_invalid() {
                 let _ = SetForegroundWindow(owner);
             }
+            // TrackPopupMenu 要物理屏幕坐标；引擎传来的是逻辑像素，
+            // 按目标点所在屏的倍率换算。
+            let scale = scale_at_logical_point(at);
             let choice = TrackPopupMenu(
                 menu,
                 TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                at.x,
-                at.y,
+                to_physical_with(at.x, scale),
+                to_physical_with(at.y, scale),
                 None,
                 owner,
                 None,
@@ -380,8 +523,11 @@ impl MascotBackend for WindowsBackend {
             if GetWindowThreadProcessId(hwnd, Some(&mut pid)) == 0 {
                 return None;
             }
-            // 自身窗口（含管理器进程内窗口）不作为交互目标。
+            // 自身窗口不作为交互目标。管理器是独立进程，还要按 HWND 排除。
             if pid == std::process::id() {
+                return None;
+            }
+            if crate::manager_window::is_hwnd(hwnd.0 as usize) {
                 return None;
             }
             if hwnd == GetDesktopWindow() || hwnd == GetShellWindow() {
@@ -418,14 +564,13 @@ impl MascotBackend for WindowsBackend {
             {
                 return None;
             }
+            // 窗口矩形按其面积最大所在屏的倍率换算成逻辑像素。
+            let scale = monitor_scale(MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST));
             Some(ActiveWindowInfo {
                 handle: hwnd.0 as u64,
-                area: Rect {
-                    left: rect.left,
-                    top: rect.top,
-                    right: rect.right,
-                    bottom: rect.bottom,
-                },
+                // 对齐 C++（pid-HWND 字符串）的窗口身份：HWND 已足够区分。
+                uid: hwnd.0 as u64,
+                area: rect_to_logical_with(rect, scale),
             })
         }
     }
@@ -480,16 +625,21 @@ impl MascotBackend for WindowsBackend {
     }
 
     fn show_text_dialog(&mut self, title: &str, text: &str) {
-        let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-        let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            MessageBoxW(
-                None,
-                PCWSTR(text_w.as_ptr()),
-                PCWSTR(title_w.as_ptr()),
-                MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SYSTEMMODAL,
-            );
-        }
+        // 不在主循环线程弹模态框：MessageBox 会卡住全部桌宠的 tick。
+        let title = title.to_string();
+        let text = text.to_string();
+        std::thread::spawn(move || {
+            let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+            let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                MessageBoxW(
+                    None,
+                    PCWSTR(text_w.as_ptr()),
+                    PCWSTR(title_w.as_ptr()),
+                    MB_OK | MB_ICONINFORMATION | MB_TOPMOST,
+                );
+            }
+        });
     }
 }
 
@@ -525,6 +675,18 @@ impl MascotWindow for LayeredWindow {
         {
             return Err(PlatformError::Win32("invalid bitmap".into()));
         }
+        // 引擎给的是逻辑像素位图；按窗口落点所在显示器的倍率放大后再提交，
+        // 桌宠跨屏移动时尺寸跟随目标屏（对齐 Qt 的 per-screen devicePixelRatio）。
+        let scale = scale_at_logical_point(top_left);
+        let scaled;
+        let (draw_w, draw_h, pixels): (u32, u32, &[u8]) = if scale == 1.0 {
+            (width, height, bitmap_bgra_premul)
+        } else {
+            let dw = ((width as f64 * scale).round().max(1.0)) as u32;
+            let dh = ((height as f64 * scale).round().max(1.0)) as u32;
+            scaled = scale_bgra_nearest(bitmap_bgra_premul, width, height, dw, dh);
+            (dw, dh, scaled.as_slice())
+        };
         unsafe {
             let screen_dc = GetDC(None);
             if screen_dc.is_invalid() {
@@ -538,8 +700,8 @@ impl MascotWindow for LayeredWindow {
             let mut bmi = BITMAPINFO::default();
             bmi.bmiHeader.biSize =
                 std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = width as i32;
-            bmi.bmiHeader.biHeight = -(height as i32); // 负高度：自上而下的 DIB
+            bmi.bmiHeader.biWidth = draw_w as i32;
+            bmi.bmiHeader.biHeight = -(draw_h as i32); // 负高度：自上而下的 DIB
             bmi.bmiHeader.biPlanes = 1;
             bmi.bmiHeader.biBitCount = 32;
             bmi.bmiHeader.biCompression = BI_RGB.0;
@@ -552,19 +714,15 @@ impl MascotWindow for LayeredWindow {
                     return Err(err("CreateDIBSection"));
                 }
             };
-            std::ptr::copy_nonoverlapping(
-                bitmap_bgra_premul.as_ptr(),
-                bits as *mut u8,
-                bitmap_bgra_premul.len(),
-            );
+            std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u8, pixels.len());
             let old = SelectObject(dc, windows::Win32::Graphics::Gdi::HGDIOBJ(hbmp.0));
             let dst = POINT {
-                x: top_left.x,
-                y: top_left.y,
+                x: to_physical_with(top_left.x, scale),
+                y: to_physical_with(top_left.y, scale),
             };
             let size = windows::Win32::Foundation::SIZE {
-                cx: width as i32,
-                cy: height as i32,
+                cx: draw_w as i32,
+                cy: draw_h as i32,
             };
             let src = POINT::default();
             let blend = BLENDFUNCTION {
@@ -602,5 +760,87 @@ impl Drop for LayeredWindow {
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.hwnd);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        mouse_event_kinds, rect_to_logical_with, scale_bgra_nearest, to_logical_with,
+        to_physical_with,
+    };
+    use crate::MascotEventKind;
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDBLCLK;
+
+    #[test]
+    fn scale_bgra_nearest_doubles_a_pixel() {
+        let src = [10u8, 20, 30, 40];
+        let out = scale_bgra_nearest(&src, 1, 1, 2, 2);
+        assert_eq!(out.len(), 16);
+        assert_eq!(&out[0..4], &[10, 20, 30, 40]);
+        assert_eq!(&out[12..16], &[10, 20, 30, 40]);
+    }
+
+    /// 96 DPI（scale=1.0）下物理与逻辑一致。
+    #[test]
+    fn conversion_is_identity_at_scale_one() {
+        assert_eq!(to_logical_with(-300, 1.0), -300);
+        assert_eq!(to_logical_with(1920, 1.0), 1920);
+        assert_eq!(to_physical_with(-300, 1.0), -300);
+        assert_eq!(to_physical_with(1920, 1.0), 1920);
+    }
+
+    /// 150% 缩放（144 DPI）：物理 150 ↔ 逻辑 100。
+    #[test]
+    fn conversion_uses_given_monitor_scale() {
+        assert_eq!(to_logical_with(150, 1.5), 100);
+        assert_eq!(to_physical_with(100, 1.5), 150);
+        assert_eq!(to_logical_with(101, 1.5), 67); // 四舍五入
+        // 非法 scale 直接透传，避免除零/NaN。
+        assert_eq!(to_logical_with(42, 0.0), 42);
+        assert_eq!(to_physical_with(42, f64::NAN), 42);
+    }
+
+    /// 主屏左侧的副屏（物理坐标为负）按自身倍率换算，符号保持。
+    #[test]
+    fn negative_coords_convert_with_own_scale() {
+        // 副屏 144 DPI、位于主屏左侧：物理 [-1920, 0) → 逻辑 [-1280, 0)。
+        assert_eq!(to_logical_with(-1920, 1.5), -1280);
+        assert_eq!(to_physical_with(-1280, 1.5), -1920);
+    }
+
+    /// 矩形逐边换算：混合 DPI 下两台屏的逻辑矩形各自独立。
+    #[test]
+    fn rect_converts_per_monitor_scale() {
+        let r = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        let logical = rect_to_logical_with(r, 1.5);
+        assert_eq!(logical.left, -1280);
+        assert_eq!(logical.right, 0);
+        assert_eq!(logical.bottom, 720);
+    }
+
+    /// 同一点在不同 scale 下得到不同逻辑值——这正是逐屏换算的意义。
+    #[test]
+    fn same_physical_point_differs_by_monitor_scale() {
+        assert_eq!(to_logical_with(2880, 1.5), 1920);
+        assert_eq!(to_logical_with(2880, 1.0), 2880);
+    }
+
+    /// 第二击必须保留按下和双击两个阶段，后续松开才能结束手势。
+    #[test]
+    fn double_click_replays_second_press_before_breeding_event() {
+        assert_eq!(
+            mouse_event_kinds(WM_LBUTTONDBLCLK),
+            Some((
+                MascotEventKind::LeftDown,
+                Some(MascotEventKind::LeftDoubleClick),
+            )),
+        );
     }
 }

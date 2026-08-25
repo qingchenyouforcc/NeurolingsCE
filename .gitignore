@@ -17,7 +17,6 @@ manager/build/
 manager/.flutter-plugins
 manager/.flutter-plugins-dependencies
 manager/windows/flutter/ephemeral/
-manager/.metadata
 manager/.gitignore_local
 
 # Flutter 构建中间产物

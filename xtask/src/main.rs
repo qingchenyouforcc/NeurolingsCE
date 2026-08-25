@@ -210,6 +210,8 @@ fn run_app(root: &Path) {
     }
     #[cfg(not(windows))]
     {
+        // 此子进程需要脱离 xtask 持续运行，等待它会让 `cargo xtask run` 无法返回。
+        #[allow(clippy::zombie_processes)]
         Command::new(&runtime)
             .current_dir(&out)
             .env("NEUROLINGS_DEBUG", "1")

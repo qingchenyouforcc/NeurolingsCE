@@ -1,10 +1,11 @@
 //! 旧版 Shimeji-ee 压缩包的分析与导入。
 //!
-//! ZIP 压缩包完整支持；其他压缩格式（7z、rar 等）返回
+//! 支持 ZIP、7z、RAR、TAR 与 TGZ；明确列入拒绝清单的格式返回
 //! [`crate::error::PackError::Unsupported`]。
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use crate::error::{PackError, Result};
@@ -198,7 +199,9 @@ pub struct LegacyArchive {
 }
 
 impl LegacyArchive {
-    /// 打开并分析旧版压缩包。仅支持 ZIP，其他格式返回
+    /// 打开并分析旧版压缩包。
+    ///
+    /// 支持 ZIP、7z、RAR、TAR 与 TGZ；明确列入拒绝清单的格式返回
     /// [`PackError::Unsupported`]。
     pub fn open(archive_path: &Path, fallback_name: &str) -> Result<Self> {
         if let Some(extension) = archive_path
@@ -209,7 +212,7 @@ impl LegacyArchive {
             if UNSUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
                 return Err(PackError::Unsupported(format!(".{extension}")));
             }
-            // rar/7z/tar/tgz：解压到受控临时目录后按目录分析（与原版 unarr 行为一致）。
+            // rar/7z/tar/tgz：解压到受控临时目录后按目录分析。
             if matches!(extension.as_str(), "rar" | "7z" | "tar" | "tgz") {
                 let tempdir = tempfile::tempdir()?;
                 extract_to_tempdir(archive_path, tempdir.path(), &extension)?;
@@ -1437,8 +1440,7 @@ pub fn import_archive(archive_path: &Path, storage_path: &Path) -> Result<BTreeS
 pub(crate) fn extract_to_tempdir(archive_path: &Path, dest: &Path, extension: &str) -> Result<()> {
     match extension {
         "rar" => extract_rar_to(archive_path, dest),
-        "7z" => sevenz_rust2::decompress_file(archive_path, dest)
-            .map_err(|e| PackError::msg(format!("Failed to extract 7z archive: {e}"))),
+        "7z" => extract_7z_to(archive_path, dest),
         "tar" => extract_tar_to(archive_path, dest, false),
         "tgz" => extract_tar_to(archive_path, dest, true),
         _ => Err(PackError::Unsupported(format!(".{extension}"))),
@@ -1458,30 +1460,152 @@ fn safe_join(root: &Path, name: &Path) -> Option<std::path::PathBuf> {
     Some(out)
 }
 
-/// 把条目内容写入目标路径（父目录自动创建）。
-fn write_entry(dest: &Path, name: &Path, data: &[u8]) -> Result<()> {
+/// 累计解压总量校验：超出 MASCOT_EXTRACTED_MAX_BYTES 立即报错（防解压炸弹）。
+fn check_extracted_total(total_bytes: u64, chunk: u64) -> Result<()> {
+    if total_bytes > limits::MASCOT_EXTRACTED_MAX_BYTES
+        || chunk > limits::MASCOT_EXTRACTED_MAX_BYTES - total_bytes
+    {
+        return Err(PackError::msg("Mascot package extracted data is too large"));
+    }
+    Ok(())
+}
+
+/// 校验单条及累计解压预算，避免在读取超限载荷后才拒绝。
+fn check_extracted_entry_size(total_bytes: u64, entry_bytes: u64) -> Result<()> {
+    if entry_bytes > limits::MASCOT_SINGLE_FILE_MAX_BYTES {
+        return Err(PackError::msg("Mascot package entry is too large"));
+    }
+    check_extracted_total(total_bytes, entry_bytes)
+}
+
+/// 校验已处理的文件数，拒绝超过归档条目上限的下一条文件。
+fn check_extracted_entry_count(file_count: usize) -> Result<()> {
+    if file_count >= limits::MASCOT_ZIP_ENTRY_MAX_COUNT {
+        return Err(PackError::msg("Archive contains too many extracted files"));
+    }
+    Ok(())
+}
+
+/// 校验实际读取长度与归档头声明一致，拒绝截断或伪造的条目数据。
+fn check_extracted_entry_data_size(declared_size: u64, actual_size: u64) -> Result<()> {
+    if declared_size != actual_size {
+        return Err(PackError::msg(
+            "Archive entry size does not match its header",
+        ));
+    }
+    Ok(())
+}
+
+/// 读取归档条目时保留一个探测字节，防止声明尺寸与实际流不一致时越过预算。
+fn read_entry_limited<R: Read>(reader: R, declared_size: u64, total_bytes: u64) -> Result<Vec<u8>> {
+    check_extracted_entry_size(total_bytes, declared_size)?;
+    let remaining_total = limits::MASCOT_EXTRACTED_MAX_BYTES - total_bytes;
+    let byte_limit = remaining_total.min(limits::MASCOT_SINGLE_FILE_MAX_BYTES);
+    let mut data = Vec::new();
+    reader
+        .take(byte_limit + 1)
+        .read_to_end(&mut data)
+        .map_err(|error| PackError::msg(format!("archive extract error: {error}")))?;
+    check_extracted_entry_size(total_bytes, data.len() as u64)?;
+    Ok(data)
+}
+
+/// 把条目内容写入目标路径（父目录自动创建），并累计解压总量。
+fn write_entry(dest: &Path, name: &Path, data: &[u8], total_bytes: &mut u64) -> Result<()> {
+    let entry_bytes = data.len() as u64;
+    check_extracted_entry_size(*total_bytes, entry_bytes)?;
     let Some(target) = safe_join(dest, name) else {
+        *total_bytes += entry_bytes;
         return Ok(());
     };
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(&target, data).map_err(Into::into)
+    std::fs::write(&target, data)?;
+    *total_bytes += entry_bytes;
+    Ok(())
+}
+
+/// 用自定义抽取回调解压 7z，逐条强制单文件和累计解压预算。
+fn extract_7z_to(archive_path: &Path, dest: &Path) -> Result<()> {
+    let mut total_bytes: u64 = 0;
+    let mut file_count: usize = 0;
+    sevenz_rust2::decompress_file_with_extract_fn(
+        archive_path,
+        dest,
+        |entry, reader, entry_dest| {
+            if entry.is_directory() {
+                return sevenz_rust2::default_entry_extract_fn(entry, reader, entry_dest);
+            }
+            check_extracted_entry_count(file_count)
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
+            let data = read_entry_limited(reader, entry.size(), total_bytes)
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
+            check_extracted_entry_data_size(entry.size(), data.len() as u64)
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
+            let mut data_reader = Cursor::new(data);
+            let result =
+                sevenz_rust2::default_entry_extract_fn(entry, &mut data_reader, entry_dest)?;
+            total_bytes += entry.size();
+            file_count += 1;
+            Ok(result)
+        },
+    )
+    .map_err(|e| PackError::msg(format!("Failed to extract 7z archive: {e}")))
 }
 
 fn extract_rar_to(archive_path: &Path, dest: &Path) -> Result<()> {
     let mut archive = unrar::Archive::new(archive_path)
         .open_for_processing()
         .map_err(|e| PackError::msg(format!("Failed to open rar archive: {e}")))?;
+    let mut total_bytes: u64 = 0;
+    let mut file_count: usize = 0;
     while let Some(cursor) = archive
         .read_header()
         .map_err(|e| PackError::msg(format!("rar read error: {e}")))?
     {
         let name = cursor.entry().filename.clone();
-        let (data, rest) = cursor
-            .read()
-            .map_err(|e| PackError::msg(format!("rar extract error: {e}")))?;
-        write_entry(dest, &name, &data)?;
+        if !cursor.entry().is_file() {
+            archive = cursor
+                .skip()
+                .map_err(|e| PackError::msg(format!("rar skip error: {e}")))?;
+            continue;
+        }
+        check_extracted_entry_count(file_count)?;
+        let declared_size = cursor.entry().unpacked_size;
+        check_extracted_entry_size(total_bytes, declared_size)?;
+        // 即使路径随后被拒绝，该文件也必须占用条目数和声明尺寸预算。
+        file_count += 1;
+        total_bytes += declared_size;
+        let Some(target) = safe_join(dest, &name) else {
+            archive = cursor
+                .skip()
+                .map_err(|e| PackError::msg(format!("rar skip error: {e}")))?;
+            continue;
+        };
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // unrar 直接写入受控路径；头部预算在落盘前检查，落盘后再核对实际长度。
+        let rest = match cursor.extract_to(&target) {
+            Ok(rest) => rest,
+            Err(error) => {
+                let _ = fs::remove_file(&target);
+                return Err(PackError::msg(format!("rar extract error: {error}")));
+            }
+        };
+        let actual_size = match fs::metadata(&target) {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                let _ = fs::remove_file(&target);
+                return Err(error.into());
+            }
+        };
+        if let Err(error) = check_extracted_entry_data_size(declared_size, actual_size) {
+            let _ = fs::remove_file(&target);
+            return Err(error);
+        }
         archive = rest;
     }
     Ok(())
@@ -1495,6 +1619,8 @@ fn extract_tar_to(archive_path: &Path, dest: &Path, gzipped: bool) -> Result<()>
         Box::new(file)
     };
     let mut archive = tar::Archive::new(reader);
+    let mut total_bytes: u64 = 0;
+    let mut file_count: usize = 0;
     for entry in archive
         .entries()
         .map_err(|e| PackError::msg(format!("tar read error: {e}")))?
@@ -1503,14 +1629,164 @@ fn extract_tar_to(archive_path: &Path, dest: &Path, gzipped: bool) -> Result<()>
         if !entry.header().entry_type().is_file() {
             continue;
         }
+        check_extracted_entry_count(file_count)?;
         let name = entry
             .path()
             .map_err(|e| PackError::msg(format!("tar path error: {e}")))?
             .to_path_buf();
-        let mut data = Vec::new();
-        std::io::Read::read_to_end(&mut entry, &mut data)
-            .map_err(|e| PackError::msg(format!("tar extract error: {e}")))?;
-        write_entry(dest, &name, &data)?;
+        let declared_size = entry.size();
+        let data = read_entry_limited(&mut entry, declared_size, total_bytes)?;
+        check_extracted_entry_data_size(declared_size, data.len() as u64)?;
+        write_entry(dest, &name, &data, &mut total_bytes)?;
+        file_count += 1;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_copy_7z<R: Read>(archive_path: &Path, entry_name: &str, reader: R) {
+        let mut archive =
+            sevenz_rust2::ArchiveWriter::new(std::fs::File::create(archive_path).unwrap()).unwrap();
+        archive.set_content_methods(vec![sevenz_rust2::EncoderMethod::COPY.into()]);
+        archive
+            .push_archive_entry(
+                sevenz_rust2::ArchiveEntry::new_file(entry_name),
+                Some(reader),
+            )
+            .unwrap();
+        archive.finish().unwrap();
+    }
+
+    #[test]
+    fn check_extracted_total_rejects_over_limit() {
+        // 未超限时放行；累计达到上限后任何非零条目都拒绝。
+        assert!(check_extracted_total(0, 1).is_ok());
+        assert!(check_extracted_total(0, limits::MASCOT_EXTRACTED_MAX_BYTES).is_ok());
+        assert!(check_extracted_total(limits::MASCOT_EXTRACTED_MAX_BYTES, 1).is_err());
+        assert!(check_extracted_total(limits::MASCOT_EXTRACTED_MAX_BYTES - 1, 2).is_err());
+    }
+
+    #[test]
+    fn check_extracted_entry_size_rejects_per_file_limit() {
+        assert!(check_extracted_entry_size(0, limits::MASCOT_SINGLE_FILE_MAX_BYTES).is_ok());
+        assert!(check_extracted_entry_size(0, limits::MASCOT_SINGLE_FILE_MAX_BYTES + 1).is_err());
+    }
+
+    #[test]
+    fn check_extracted_entry_count_rejects_next_file_after_limit() {
+        assert!(check_extracted_entry_count(limits::MASCOT_ZIP_ENTRY_MAX_COUNT - 1).is_ok());
+        assert!(check_extracted_entry_count(limits::MASCOT_ZIP_ENTRY_MAX_COUNT).is_err());
+    }
+
+    #[test]
+    fn check_extracted_entry_data_size_rejects_mismatch() {
+        assert!(check_extracted_entry_data_size(3, 3).is_ok());
+        assert!(check_extracted_entry_data_size(3, 2).is_err());
+    }
+
+    #[test]
+    fn read_entry_limited_stops_after_hard_budget() {
+        let mut reader = Cursor::new(vec![
+            0u8;
+            (limits::MASCOT_SINGLE_FILE_MAX_BYTES + 2) as usize
+        ]);
+        let error = read_entry_limited(&mut reader, 0, 0).unwrap_err();
+
+        assert_eq!(error.to_string(), "Mascot package entry is too large");
+        assert_eq!(reader.position(), limits::MASCOT_SINGLE_FILE_MAX_BYTES + 1);
+    }
+
+    #[test]
+    fn read_entry_limited_respects_remaining_total_budget() {
+        let mut reader = Cursor::new(vec![0u8; 2]);
+        let error =
+            read_entry_limited(&mut reader, 0, limits::MASCOT_EXTRACTED_MAX_BYTES - 1).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Mascot package extracted data is too large"
+        );
+        assert_eq!(reader.position(), 2);
+    }
+
+    #[test]
+    fn tar_rejects_oversized_declared_entry_before_writing() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let archive_path = tempdir.path().join("oversized.tar");
+        let mut builder = tar::Builder::new(std::fs::File::create(&archive_path).unwrap());
+        let mut header = tar::Header::new_gnu();
+        let entry_size = limits::MASCOT_SINGLE_FILE_MAX_BYTES + 1;
+        header.set_size(entry_size);
+        header.set_mode(0o644);
+        header.set_cksum();
+        let mut contents = std::io::repeat(0).take(entry_size);
+        builder
+            .append_data(&mut header, "oversized.bin", &mut contents)
+            .unwrap();
+        builder.finish().unwrap();
+
+        let destination = tempdir.path().join("extracted");
+        let error = extract_tar_to(&archive_path, &destination, false).unwrap_err();
+        assert_eq!(error.to_string(), "Mascot package entry is too large");
+        assert!(!destination.join("oversized.bin").exists());
+    }
+
+    #[test]
+    fn sevenz_rejects_oversized_declared_entry_before_writing() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let entry_size = limits::MASCOT_SINGLE_FILE_MAX_BYTES + 1;
+        let archive_path = tempdir.path().join("oversized.7z");
+        write_copy_7z(
+            &archive_path,
+            "oversized.bin",
+            std::io::repeat(0).take(entry_size),
+        );
+
+        let destination = tempdir.path().join("extracted");
+        let error = extract_7z_to(&archive_path, &destination).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Mascot package entry is too large")
+        );
+        assert!(!destination.join("oversized.bin").exists());
+    }
+
+    #[test]
+    fn sevenz_extracts_small_entry_with_bounded_reader() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let archive_path = tempdir.path().join("small.7z");
+        write_copy_7z(&archive_path, "small.txt", Cursor::new(b"bounded"));
+
+        let destination = tempdir.path().join("extracted");
+        extract_7z_to(&archive_path, &destination).unwrap();
+        assert_eq!(
+            std::fs::read(destination.join("small.txt")).unwrap(),
+            b"bounded"
+        );
+    }
+
+    #[test]
+    fn write_entry_accumulates_and_enforces_total_limit() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let mut total_bytes: u64 = 0;
+        write_entry(tempdir.path(), Path::new("a.txt"), b"abc", &mut total_bytes).unwrap();
+        assert_eq!(total_bytes, 3);
+        // 不安全路径跳过写入，但已读取的数据必须占用预算。
+        write_entry(
+            tempdir.path(),
+            Path::new("../evil.txt"),
+            b"x",
+            &mut total_bytes,
+        )
+        .unwrap();
+        assert_eq!(total_bytes, 4);
+        // 总量已达上限时写入报错，且不落盘。
+        total_bytes = limits::MASCOT_EXTRACTED_MAX_BYTES;
+        assert!(write_entry(tempdir.path(), Path::new("b.txt"), b"x", &mut total_bytes).is_err());
+        assert!(!tempdir.path().join("b.txt").exists());
+    }
 }

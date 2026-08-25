@@ -30,31 +30,52 @@ fn status() -> &'static Mutex<UpdateStatus> {
     STATUS.get_or_init(|| Mutex::new(UpdateStatus::default()))
 }
 
-/// 从设置读取更新流量代理配置。
-fn proxy_from_settings(
-    settings: &crate::settings::Settings,
-) -> neurolings_store::network::ProxySpec {
-    neurolings_store::network::ProxySpec {
-        mode: settings.get_string("update/proxyMode", "system"),
-        host: settings.get_string("update/proxyHost", ""),
-        port: settings.get_i64("update/proxyPort", 8080).clamp(1, 65535) as u16,
-        username: settings.get_string("update/proxyUsername", ""),
-        password: settings.get_string("update/proxyPassword", ""),
+/// 后台更新任务所需的设置快照。
+///
+/// 该值只在线程间传递，不会写入日志、响应或持久化设置。
+#[derive(Clone)]
+pub struct UpdateRequestConfig {
+    proxy: neurolings_store::network::ProxySpec,
+    ignored_version: String,
+    remind_version: String,
+    remind_at: String,
+}
+
+/// 下载完成后回到主线程持久化的结果。
+pub struct DownloadedUpdate {
+    pub version: String,
+    pub path: String,
+    pub sha256: String,
+}
+
+/// 从主线程设置创建后台更新任务快照。
+pub fn request_config(settings: &crate::settings::Settings) -> UpdateRequestConfig {
+    UpdateRequestConfig {
+        proxy: neurolings_store::network::ProxySpec {
+            mode: settings.get_string("update/proxyMode", "system"),
+            host: settings.get_string("update/proxyHost", ""),
+            port: settings.get_i64("update/proxyPort", 8080).clamp(1, 65535) as u16,
+            username: settings.get_string("update/proxyUsername", ""),
+            password: settings.get_string("update/proxyPassword", ""),
+        },
+        ignored_version: settings.get_string("update/ignoredVersion", ""),
+        remind_version: settings.get_string("update/remindVersion", ""),
+        remind_at: settings.get_string("update/remindAt", ""),
     }
 }
 
 /// 指定版本是否被忽略或处于稍后提醒抑制期。
-fn is_suppressed(settings: &crate::settings::Settings, version: &str) -> bool {
-    if settings.get_string("update/ignoredVersion", "") == version {
+fn is_suppressed(config: &UpdateRequestConfig, version: &str) -> bool {
+    if config.ignored_version == version {
         return true;
     }
-    if settings.get_string("update/remindVersion", "") == version {
-        let remind_at = settings.get_string("update/remindAt", "");
-        let remind_epoch = remind_at
+    if config.remind_version == version {
+        let remind_epoch = config
+            .remind_at
             .parse::<i64>()
             .ok()
             .or_else(|| {
-                chrono::DateTime::parse_from_rfc3339(&remind_at)
+                chrono::DateTime::parse_from_rfc3339(&config.remind_at)
                     .ok()
                     .map(|d| d.timestamp())
             })
@@ -68,11 +89,15 @@ fn is_suppressed(settings: &crate::settings::Settings, version: &str) -> bool {
 
 /// 执行一次检查；返回是否有需要提示的新版本。
 pub fn run_check(settings: &crate::settings::Settings) -> bool {
-    let proxy = proxy_from_settings(settings);
+    run_check_with_config(&request_config(settings))
+}
+
+/// 使用启动时快照执行更新检查，可安全在线程中调用。
+pub fn run_check_with_config(config: &UpdateRequestConfig) -> bool {
     let manifest = match neurolings_store::updater::fetch_manifest_with_proxy(
         MANIFEST_URL,
         15_000,
-        Some(&proxy),
+        Some(&config.proxy),
     ) {
         Ok(manifest) => manifest,
         Err(e) => {
@@ -102,7 +127,7 @@ pub fn run_check(settings: &crate::settings::Settings) -> bool {
             } else {
                 manifest.release_page.clone()
             };
-            let suppressed = is_suppressed(settings, &manifest.version);
+            let suppressed = is_suppressed(config, &manifest.version);
             s.notify = !suppressed;
             !suppressed
         }
@@ -142,11 +167,8 @@ pub fn status_json() -> Value {
     })
 }
 
-/// 下载当前清单版本的平台资产（SHA-256 校验）并登记为可安装。
-pub fn download(
-    app_data_dir: &std::path::Path,
-    settings: &crate::settings::Settings,
-) -> Result<Value, String> {
+/// 标记下载开始。调用方应立即将实际网络和文件 I/O 转入后台 worker。
+pub fn begin_download() -> Result<(), String> {
     {
         let mut s = status().lock().unwrap();
         if s.downloading {
@@ -154,12 +176,35 @@ pub fn download(
         }
         s.downloading = true;
     }
-    let proxy = proxy_from_settings(settings);
-    let manifest =
-        neurolings_store::updater::fetch_manifest_with_proxy(MANIFEST_URL, 15_000, Some(&proxy))
-            .inspect_err(|_e| {
-                status().lock().unwrap().downloading = false;
-            })?;
+    Ok(())
+}
+
+/// 撤销尚未进入后台队列的下载标记。
+///
+/// 调度器可能在 `begin_download` 后拒绝任务；此时必须恢复状态，避免前端永久显示
+/// 下载进行中。已开始执行的下载不调用本函数。
+pub(crate) fn cancel_download_before_start() {
+    status().lock().unwrap().downloading = false;
+}
+
+/// 在后台下载当前清单版本的平台资产并校验 SHA-256。
+pub fn download_with_config(
+    app_data_dir: &std::path::Path,
+    config: &UpdateRequestConfig,
+) -> Result<DownloadedUpdate, String> {
+    let manifest = match neurolings_store::updater::fetch_manifest_with_proxy(
+        MANIFEST_URL,
+        15_000,
+        Some(&config.proxy),
+    ) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let mut s = status().lock().unwrap();
+            s.downloading = false;
+            s.error = error.clone();
+            return Err(error);
+        }
+    };
     let key = neurolings_store::updater::current_asset_key();
     let Some(asset) = manifest.assets.get(key).cloned() else {
         status().lock().unwrap().downloading = false;
@@ -173,25 +218,59 @@ pub fn download(
         asset.name.clone()
     };
     let dest = dest_dir.join(file_name);
-    let result =
-        neurolings_store::updater::download_update_with_proxy(&asset, &dest, 300_000, Some(&proxy));
+    let result = neurolings_store::updater::download_update_with_proxy(
+        &asset,
+        &dest,
+        300_000,
+        Some(&config.proxy),
+    );
     let mut s = status().lock().unwrap();
     s.downloading = false;
     result.inspect_err(|e| {
         s.error = e.clone();
     })?;
-    s.downloaded_version = manifest.version.clone();
-    s.downloaded_path = dest.to_string_lossy().into_owned();
-    s.downloaded_sha256 = asset.sha256.clone();
-    Ok(json!({
-        "downloaded": true,
-        "version": s.downloaded_version,
-        "path": s.downloaded_path,
-    }))
+    let downloaded = DownloadedUpdate {
+        version: manifest.version,
+        path: dest.to_string_lossy().into_owned(),
+        sha256: asset.sha256,
+    };
+    s.downloaded_version = downloaded.version.clone();
+    s.downloaded_path = downloaded.path.clone();
+    s.downloaded_sha256 = downloaded.sha256.clone();
+    Ok(downloaded)
+}
+
+/// 把已下载安装包信息写入设置（键名与 migrate.rs GROUP_KEYS 一致）。
+pub fn persist_downloaded(
+    settings: &mut crate::settings::Settings,
+    version: &str,
+    path: &str,
+    sha256: &str,
+) -> Result<(), String> {
+    settings.set(
+        crate::settings::KEY_UPDATE_DOWNLOADED_VERSION,
+        json!(version),
+    )?;
+    settings.set(crate::settings::KEY_UPDATE_DOWNLOADED_PATH, json!(path))?;
+    settings.set(crate::settings::KEY_UPDATE_DOWNLOADED_SHA256, json!(sha256))
+}
+
+/// 启动时从设置恢复已下载安装包信息（参考实现 GitHubUpdateManager 构造函数）：
+/// 安装包文件已不在磁盘上时不恢复，避免指向失效路径。
+pub fn restore_downloaded(settings: &crate::settings::Settings) {
+    let path = settings.get_string(crate::settings::KEY_UPDATE_DOWNLOADED_PATH, "");
+    if path.is_empty() || !std::path::Path::new(&path).is_file() {
+        return;
+    }
+    let mut s = status().lock().unwrap();
+    s.downloaded_version = settings.get_string(crate::settings::KEY_UPDATE_DOWNLOADED_VERSION, "");
+    s.downloaded_path = path;
+    s.downloaded_sha256 = settings.get_string(crate::settings::KEY_UPDATE_DOWNLOADED_SHA256, "");
 }
 
 /// 安装已下载的更新：SHA-256 复检后启动安装器（MSI/EXE）。
-pub fn install(settings: &crate::settings::Settings) -> Result<Value, String> {
+/// 该函数只读取全局下载状态，因此可在线程中执行。
+pub fn install() -> Result<Value, String> {
     let (version, path, sha256) = {
         let s = status().lock().unwrap();
         (
@@ -211,7 +290,6 @@ pub fn install(settings: &crate::settings::Settings) -> Result<Value, String> {
             return Err(format!("sha256_mismatch: expected {sha256}, got {hex}"));
         }
     }
-    let _ = settings;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -235,5 +313,56 @@ pub fn install(settings: &crate::settings::Settings) -> Result<Value, String> {
             .spawn()
             .map_err(|e| format!("launch_failed: {e}"))?;
     }
+    // 安装器已启动：请求运行时优雅退出（停止本地/HTTP API 并退出应用），
+    // 否则 exe/dll 被占用会导致安装失败。延迟置位，确保本响应先发回调用方。
+    crate::services::request_exit_after_install();
     Ok(json!({ "launched": true, "version": version }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 下载结果写入设置后，重新加载设置可正确恢复到内存状态；
+    /// 安装包文件已不在磁盘上时不恢复（恢复函数的既定语义）。
+    /// 两个场景共享全局 STATUS，故放在同一测试内顺序执行。
+    #[test]
+    fn downloaded_installer_persists_and_restores() {
+        let dir = tempfile::tempdir().unwrap();
+        // 伪造已下载安装包文件（恢复时校验文件存在性）。
+        let installer = dir.path().join("update.msi");
+        std::fs::write(&installer, b"fake").unwrap();
+        let path = installer.to_string_lossy().into_owned();
+
+        let mut settings = crate::settings::Settings::load(dir.path());
+        persist_downloaded(&mut settings, "1.2.3", &path, "abc123").unwrap();
+
+        // 模拟重启：重新加载设置并恢复。
+        let settings = crate::settings::Settings::load(dir.path());
+        restore_downloaded(&settings);
+        {
+            let s = status().lock().unwrap();
+            assert_eq!(s.downloaded_version, "1.2.3");
+            assert_eq!(s.downloaded_path, path);
+            assert_eq!(s.downloaded_sha256, "abc123");
+        }
+
+        // 文件缺失场景：清空内存状态后恢复，应保持为空。
+        let dir2 = tempfile::tempdir().unwrap();
+        let mut settings2 = crate::settings::Settings::load(dir2.path());
+        let missing = dir2.path().join("gone.msi").to_string_lossy().into_owned();
+        persist_downloaded(&mut settings2, "9.9.9", &missing, "deadbeef").unwrap();
+        {
+            let mut s = status().lock().unwrap();
+            s.downloaded_version.clear();
+            s.downloaded_path.clear();
+            s.downloaded_sha256.clear();
+        }
+        let settings2 = crate::settings::Settings::load(dir2.path());
+        restore_downloaded(&settings2);
+        let s = status().lock().unwrap();
+        assert!(s.downloaded_path.is_empty());
+        assert!(s.downloaded_version.is_empty());
+        assert!(s.downloaded_sha256.is_empty());
+    }
 }

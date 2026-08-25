@@ -90,8 +90,9 @@ impl Action for Move {
             }
         } else if self.anim.base.vars.has("TargetY") {
             let y = self.anim.base.vars.get_num("TargetY", 0.0);
-            // 修复原版 move.cc 历史 bug：TargetY 应比较 y 坐标而非 x
-            if passed(start.y, end.y, y) {
+            // 行为基准：passed 宏恒用水平坐标比较，
+            // TargetY 分支也不例外（scanmove.rs 同款）。
+            if passed(start.x, end.x, y) {
                 mascot.borrow_mut().anchor.y = y;
                 return Ok(false);
             }

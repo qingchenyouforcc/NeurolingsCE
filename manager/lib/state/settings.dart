@@ -11,7 +11,9 @@ class SettingsController extends ChangeNotifier {
 
   static String get settingsPath {
     final home =
-        Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+        Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ??
+        '';
     if (Platform.isWindows) {
       final local = Platform.environment['LOCALAPPDATA'] ?? home;
       return '$local\\NeurolingsCE\\settings.json';
@@ -35,8 +37,12 @@ class SettingsController extends ChangeNotifier {
     if (value is String && value.trim().isNotEmpty) {
       return value.trim().toLowerCase().startsWith('zh') ? 'zh' : 'en';
     }
-    // 系统区域回退。
-    return Platform.localeName.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+    // 系统区域回退，并写入 settings.json，让运行时托盘语言与管理器一致。
+    final locale = Platform.localeName.toLowerCase().startsWith('zh')
+        ? 'zh'
+        : 'en';
+    _persistLocale(locale);
+    return locale;
   }
 
   void setLocale(String locale) {
@@ -52,9 +58,11 @@ class SettingsController extends ChangeNotifier {
       final settings = _readSettings();
       settings['language'] = locale == 'zh' ? 'zh_CN' : 'en';
       final file = File(settingsPath);
-      final tmp = '${settingsPath}.tmp';
+      final tmp = '$settingsPath.tmp';
       file.parent.createSync(recursive: true);
-      File(tmp).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(settings));
+      File(
+        tmp,
+      ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(settings));
       File(tmp).renameSync(settingsPath);
     } catch (_) {
       // 写入失败时下次启动回退系统语言。

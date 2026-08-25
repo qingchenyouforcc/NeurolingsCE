@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 
 use neurolings_pack::MascotMetadata;
 use neurolings_pack::{
-    MascotPackageReport, default_storage_path, import_archive, inspect_package, metadata_from_json,
-    migrate_legacy_directories, package_path_for_name, sanitized_package_base_name,
-    validate_package,
+    MascotPackageReport, default_storage_path, import_archive, inspect_package,
+    migrate_legacy_directories, package_path_for_name, validate_package,
 };
 
 use crate::parser::{CliCommand, CliCommandKind, CliError};
@@ -105,33 +104,17 @@ pub fn list_standalone_loaded_mascots(storage: &Path) -> Vec<LoadedMascotInfo> {
         };
         let entry_name = entry.file_name().to_string_lossy().to_string();
         let path = entry.path();
-        if file_type.is_file() && entry_name.to_ascii_lowercase().ends_with(".mascot") {
-            if let Ok(metadata) = inspect_package(&path) {
-                templates.push(LoadedMascotInfo {
-                    id: -1,
-                    name: metadata.name,
-                    version: metadata.version,
-                    description: metadata.description,
-                    author: metadata.author,
-                });
-            }
-        } else if file_type.is_dir() {
-            let info_path = path.join("info.json");
-            if !info_path.is_file() {
-                continue;
-            }
-            let Ok(bytes) = fs::read(&info_path) else {
-                continue;
-            };
-            if let Ok(metadata) = metadata_from_json(&bytes) {
-                templates.push(LoadedMascotInfo {
-                    id: -1,
-                    name: metadata.name,
-                    version: metadata.version,
-                    description: metadata.description,
-                    author: metadata.author,
-                });
-            }
+        if file_type.is_file()
+            && entry_name.to_ascii_lowercase().ends_with(".mascot")
+            && let Ok(metadata) = inspect_package(&path)
+        {
+            templates.push(LoadedMascotInfo {
+                id: -1,
+                name: metadata.name,
+                version: metadata.version,
+                description: metadata.description,
+                author: metadata.author,
+            });
         }
     }
 
@@ -152,7 +135,7 @@ pub fn list_standalone_loaded_mascots(storage: &Path) -> Vec<LoadedMascotInfo> {
 /// 内置默认模板的元数据（虚拟模板 @，与运行时内嵌一致）。
 fn default_metadata() -> MascotMetadata {
     MascotMetadata {
-        name: "@".to_string(),
+        name: "Default".to_string(),
         version: "1.0".to_string(),
         description: "Default mascot for the application.".to_string(),
         author: "pixelomer[https://github.com/pixelomer]".to_string(),
@@ -253,18 +236,14 @@ pub fn remove_standalone_mascot_template(
     migrate_legacy_directories(&storage_path);
 
     let package_target = package_path_for_name(&storage_path, name);
-    let directory_target = storage_path.join(sanitized_package_base_name(name));
-    let target = if package_target.is_file() {
-        package_target
-    } else if directory_target.is_dir() {
-        directory_target
-    } else {
+    if !package_target.is_file() {
         return Err(CliError::new(
             "mascot_template_not_found",
             "No such mascot template",
             1,
         ));
-    };
+    }
+    let target = package_target;
 
     if !is_inside_storage(&storage_path, &target) {
         return Err(CliError::new(
@@ -274,11 +253,7 @@ pub fn remove_standalone_mascot_template(
         ));
     }
 
-    let removed = if target.is_dir() {
-        fs::remove_dir_all(&target)
-    } else {
-        fs::remove_file(&target)
-    };
+    let removed = fs::remove_file(&target);
     if removed.is_err() {
         let mut error = CliError::new("remove_failed", "Could not remove mascot template", 1);
         error.details = target.display().to_string();

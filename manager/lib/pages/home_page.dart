@@ -1,10 +1,10 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:neurolings_manager/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -25,8 +25,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   /// 选中的模板名集合（多选，ExtendedSelection 语义）。
   final Set<String> _selected = {};
-  /// 模板 id → 预览 PNG 字节缓存。
-  final Map<int, Uint8ListAware> _previews = {};
+
+  /// 模板名 → 预览 PNG（不能按不稳定的 id 缓存，导入后下标会变）。
+  final Map<String, Uint8ListAware> _previews = {};
 
   bool _isSelected(String name) => _selected.contains(name);
 
@@ -40,6 +41,26 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// 单击选择：默认单选，Ctrl/Meta 追加或取消。
+  void _select(String name) {
+    final additive =
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    setState(() {
+      if (additive) {
+        if (_selected.contains(name)) {
+          _selected.remove(name);
+        } else {
+          _selected.add(name);
+        }
+      } else {
+        _selected
+          ..clear()
+          ..add(name);
+      }
+    });
+  }
+
   Future<void> _spawnRandom() async {
     final state = context.read<AppState>();
     if (state.templates.isEmpty) return;
@@ -48,40 +69,58 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _import() async {
+    final state = context.read<AppState>();
+    final l10n = AppLocalizations.of(context);
     final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zip', 'mascot'],
+      type: FileType.any,
       allowMultiple: true,
-      dialogTitle: AppLocalizations.of(context).importButton,
+      dialogTitle: l10n.importButton,
     );
     if (picked == null) return;
     final files = picked.files.map((f) => f.path).whereType<String>().toList();
     if (files.isEmpty) return;
-    final l10n = AppLocalizations.of(context);
     for (final path in files) {
-      final output = await context.read<AppState>().importArchive(path);
+      final output = await state.importArchive(path);
       if (!mounted) return;
-      displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
-          title: Text(output.startsWith('{') || output.contains('imported')
-              ? l10n.homeImportDone
-              : l10n.error),
-          content: Text(output),
-          severity: output.contains('imported') || output.startsWith('{')
-              ? InfoBarSeverity.success
-              : InfoBarSeverity.error,
-          action: IconButton(icon: const Icon(FluentIcons.clear), onPressed: close),
-        );
-      });
+      displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
+            title: Text(
+              output.startsWith('{') || output.contains('imported')
+                  ? l10n.homeImportDone
+                  : l10n.error,
+            ),
+            content: Text(output),
+            severity: output.contains('imported') || output.startsWith('{')
+                ? InfoBarSeverity.success
+                : InfoBarSeverity.error,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        },
+      );
     }
   }
 
   Future<void> _showFolder() async {
-    final home =
-        Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
-    if (Platform.isWindows) {
-      final local = Platform.environment['LOCALAPPDATA'] ?? home;
-      await Process.run('explorer', ['$local\\NeurolingsCE\\mascots']);
+    try {
+      final result = await context.read<AppState>().api.command({
+        'command': 'storage_path',
+      });
+      final path = result['path'] as String?;
+      if (path == null || path.isEmpty) return;
+      if (Platform.isWindows) {
+        await Process.run('explorer', [path]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [path]);
+      } else {
+        await Process.run('xdg-open', [path]);
+      }
+    } catch (_) {
+      // 运行时离线时忽略。
     }
   }
 
@@ -89,17 +128,19 @@ class _HomePageState extends State<HomePage> {
     await context.read<AppState>().spawn(name);
   }
 
-  /// 拉取模板预览图（runtime preview_png，128×128 PNG）。
-  Future<void> _loadPreview(int id) async {
-    if (_previews.containsKey(id)) return;
+  /// 拉取模板预览图（runtime preview_png，按名称缓存）。
+  Future<void> _loadPreview(String name) async {
+    if (_previews.containsKey(name)) return;
     try {
-      final result = await context.read<AppState>().api
-          .command({'command': 'preview_png', 'id': id});
+      final result = await context.read<AppState>().api.command({
+        'command': 'preview_png',
+        'name': name,
+      });
       final base64Text = result['preview_base64'] as String?;
       if (base64Text != null) {
         final bytes = base64Decode(base64Text);
         if (mounted) {
-          setState(() => _previews[id] = Uint8ListAware(bytes));
+          setState(() => _previews[name] = Uint8ListAware(bytes));
         }
       }
     } catch (_) {
@@ -111,8 +152,9 @@ class _HomePageState extends State<HomePage> {
     final l10n = AppLocalizations.of(context);
     final state = context.read<AppState>();
     // 内置默认模板不可删除（对齐原版 deletable()==false）。
-    final deletable =
-        _selected.where((name) => name != '@').toList();
+    final deletable = _selected
+        .where((name) => name != '@' && name != 'Default')
+        .toList();
     if (deletable.isEmpty) return;
     final shown = deletable.take(5).join(', ');
     final more = deletable.length > 5
@@ -122,7 +164,9 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (dialogContext) => ContentDialog(
         title: Text(l10n.deleteSelected),
-        content: Text('${l10n.homeDeleteConfirm(deletable.length)}\n\n$shown$more'),
+        content: Text(
+          '${l10n.homeDeleteConfirm(deletable.length)}\n\n$shown$more',
+        ),
         actions: [
           Button(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -144,13 +188,16 @@ class _HomePageState extends State<HomePage> {
         });
       } catch (e) {
         if (!mounted) return;
-        displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: Text(l10n.error),
-            content: Text('$name: $e'),
-            severity: InfoBarSeverity.error,
-          );
-        });
+        displayInfoBar(
+          context,
+          builder: (ctx, close) {
+            return InfoBar(
+              title: Text(l10n.error),
+              content: Text('$name: $e'),
+              severity: InfoBarSeverity.error,
+            );
+          },
+        );
       }
     }
     setState(() => _selected.clear());
@@ -166,67 +213,89 @@ class _HomePageState extends State<HomePage> {
         ? templates.where((t) => t.name == _selected.first).firstOrNull
         : null;
 
+    final hasImported = templates.any(
+      (t) => t.name != '@' && t.name != 'Default',
+    );
     return ScaffoldPage.scrollable(
       header: PageHeader(
-        title: Text(l10n.appTitle),
+        title: Text(l10n.homeTitle),
         commandBar: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            FilledButton(
-              onPressed: templates.isEmpty ? null : _spawnRandom,
-              child: Text(l10n.spawnRandom),
-            ),
-            const SizedBox(width: 8),
-            Button(onPressed: _import, child: Text(l10n.importButton)),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: () => state.refresh(),
-              child: Text(l10n.refresh),
-            ),
-            const SizedBox(width: 8),
-            Button(onPressed: _showFolder, child: Text(l10n.showFolder)),
-          ]),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton(
+                onPressed: templates.isEmpty ? null : _spawnRandom,
+                child: Text(l10n.spawnRandom),
+              ),
+              const SizedBox(width: 8),
+              Button(onPressed: _import, child: Text(l10n.importButton)),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: () => state.refresh(reloadLibrary: true),
+                child: Text(l10n.refresh),
+              ),
+              const SizedBox(width: 8),
+              Button(onPressed: _showFolder, child: Text(l10n.showFolder)),
+            ],
+          ),
         ),
       ),
       children: [
-        if (templates.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            l10n.homePageDescription,
+            style: FluentTheme.of(context).typography.body,
+          ),
+        ),
+        if (!hasImported)
           Padding(
             padding: const EdgeInsets.all(32),
-            child: Column(children: [
-              const Icon(FluentIcons.people, size: 48),
-              const SizedBox(height: 12),
-              Text(l10n.noTemplates,
-                  style: FluentTheme.of(context).typography.subtitle),
-              const SizedBox(height: 4),
-              Text(l10n.noTemplatesHint,
-                  style: FluentTheme.of(context).typography.caption),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: _import,
-                child: Text(l10n.importMascot),
-              ),
-            ]),
+            child: Column(
+              children: [
+                const Icon(FluentIcons.people, size: 48),
+                const SizedBox(height: 12),
+                Text(
+                  l10n.noTemplates,
+                  style: FluentTheme.of(context).typography.subtitle,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  l10n.noTemplatesHint,
+                  style: FluentTheme.of(context).typography.caption,
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _import,
+                  child: Text(l10n.importMascot),
+                ),
+              ],
+            ),
           )
         else
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: LayoutBuilder(builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 640;
-              final library = _libraryList(context, templates);
-              final details = _detailsPanel(context, selectedTemplate, state);
-              if (wide) {
-                return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(flex: 3, child: library),
-                  const SizedBox(width: 10),
-                  Expanded(flex: 2, child: details),
-                ]);
-              }
-              return Column(children: [
-                library,
-                const SizedBox(height: 8),
-                details,
-              ]);
-            }),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 640;
+                final library = _libraryList(context, templates);
+                final details = _detailsPanel(context, selectedTemplate, state);
+                if (wide) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 3, child: library),
+                      const SizedBox(width: 10),
+                      Expanded(flex: 2, child: details),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [library, const SizedBox(height: 8), details],
+                );
+              },
+            ),
           ),
       ],
     );
@@ -234,143 +303,197 @@ class _HomePageState extends State<HomePage> {
 
   Widget _libraryList(BuildContext context, List<LoadedMascot> templates) {
     final l10n = AppLocalizations.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(l10n.loadedMascots,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          ...templates.map((template) {
-            _loadPreview(template.id);
-            final preview = _previews[template.id];
-            final tooltip =
-                '${template.name}\nVersion: ${template.version}\nAuthor: ${template.author}';
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: HoverButton(
-                onPressed: () => _spawnByName(template.name),
-                onLongPress: () => _toggle(template.name, !_isSelected(template.name)),
-                builder: (context, hover) => Container(
-                  decoration: BoxDecoration(
-                    color: _isSelected(template.name)
-                        ? FluentTheme.of(context)
-                            .accentColor
-                            .withValues(alpha: 0.15)
-                        : hover.isHovered
-                            ? FluentTheme.of(context)
-                                .resources
-                                .controlFillColorDefault
-                            : Colors.transparent,
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  padding: const EdgeInsets.all(6),
-                  child: Row(children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(6),
-                        color: FluentTheme.of(context)
-                            .resources
-                            .controlFillColorSecondary,
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: preview == null
-                          ? const Icon(FluentIcons.image_pixel, size: 24)
-                          : Image.memory(preview.bytes,
-                              fit: BoxFit.contain, filterQuality: FilterQuality.medium),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Tooltip(
-                        message: tooltip,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+          for (final name in _selected) {
+            _spawnByName(name);
+          }
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l10n.loadedMascots,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ...templates.map((template) {
+                _loadPreview(template.name);
+                final preview = _previews[template.name];
+                final tooltip =
+                    '${template.name}\nVersion: ${template.version}\nAuthor: ${template.author}';
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: GestureDetector(
+                    onTap: () => _select(template.name),
+                    onDoubleTap: () => _spawnByName(template.name),
+                    child: HoverButton(
+                      onPressed: () => _select(template.name),
+                      builder: (context, hover) => Container(
+                        decoration: BoxDecoration(
+                          color: _isSelected(template.name)
+                              ? FluentTheme.of(
+                                  context,
+                                ).accentColor.withValues(alpha: 0.15)
+                              : hover.isHovered
+                              ? FluentTheme.of(
+                                  context,
+                                ).resources.controlFillColorDefault
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        padding: const EdgeInsets.all(6),
+                        child: Row(
                           children: [
-                            Text(template.name,
-                                style: FluentTheme.of(context)
-                                    .typography
-                                    .bodyStrong),
-                            if (template.version.isNotEmpty)
-                              Text('v${template.version}',
-                                  style:
-                                      FluentTheme.of(context).typography.caption),
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                color: FluentTheme.of(
+                                  context,
+                                ).resources.controlFillColorSecondary,
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: preview == null
+                                  ? const Icon(
+                                      FluentIcons.image_pixel,
+                                      size: 24,
+                                    )
+                                  : Image.memory(
+                                      preview.bytes,
+                                      fit: BoxFit.contain,
+                                      filterQuality: FilterQuality.medium,
+                                    ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Tooltip(
+                                message: tooltip,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      template.name,
+                                      style: FluentTheme.of(
+                                        context,
+                                      ).typography.bodyStrong,
+                                    ),
+                                    if (template.version.isNotEmpty)
+                                      Text(
+                                        'v${template.version}',
+                                        style: FluentTheme.of(
+                                          context,
+                                        ).typography.caption,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Checkbox(
+                              checked: _isSelected(template.name),
+                              onChanged: (v) =>
+                                  _toggle(template.name, v ?? false),
+                            ),
                           ],
                         ),
                       ),
                     ),
-                    Checkbox(
-                      checked: _isSelected(template.name),
-                      onChanged: (v) => _toggle(template.name, v ?? false),
-                    ),
-                  ]),
-                ),
-              ),
-            );
-          }),
-        ]),
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _detailsPanel(
-      BuildContext context, LoadedMascot? template, AppState state) {
+    BuildContext context,
+    LoadedMascot? template,
+    AppState state,
+  ) {
     final l10n = AppLocalizations.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (template == null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text(l10n.homeSelectTemplate,
-                    style: FluentTheme.of(context).typography.body),
-              ),
-            )
-          else ...[
-            Center(
-              child: Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: FluentTheme.of(context)
-                      .resources
-                      .controlFillColorSecondary,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (template == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Text(
+                    l10n.homeSelectTemplate,
+                    style: FluentTheme.of(context).typography.body,
+                  ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: _previews[template.id] == null
-                    ? const Icon(FluentIcons.image_pixel, size: 32)
-                    : Image.memory(_previews[template.id]!.bytes,
-                        fit: BoxFit.contain),
+              )
+            else ...[
+              Center(
+                child: Container(
+                  width: 96,
+                  height: 96,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: FluentTheme.of(
+                      context,
+                    ).resources.controlFillColorSecondary,
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _previews[template.name] == null
+                      ? const Icon(FluentIcons.image_pixel, size: 32)
+                      : Image.memory(
+                          _previews[template.name]!.bytes,
+                          fit: BoxFit.contain,
+                        ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Center(
-              child: Text(template.name,
-                  style: FluentTheme.of(context).typography.subtitle),
-            ),
-            const SizedBox(height: 12),
-            _metaRow(l10n.version, template.version),
-            _metaRow(l10n.author, template.author),
-            const SizedBox(height: 4),
-            Text(l10n.description,
-                style: FluentTheme.of(context).typography.bodyStrong),
-            const SizedBox(height: 4),
-            Text(template.description.isEmpty ? '-' : template.description,
-                style: FluentTheme.of(context).typography.caption),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: Button(
-                onPressed: _selected.any((n) => n != '@') ? _deleteSelected : null,
-                child: Text(l10n.deleteSelected),
+              const SizedBox(height: 10),
+              Center(
+                child: Text(
+                  template.name,
+                  style: FluentTheme.of(context).typography.subtitle,
+                ),
               ),
-            ),
+              const SizedBox(height: 12),
+              _metaRow(l10n.version, template.version),
+              _metaRow(l10n.author, template.author),
+              const SizedBox(height: 4),
+              Text(
+                l10n.description,
+                style: FluentTheme.of(context).typography.bodyStrong,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                template.description.isEmpty ? '-' : template.description,
+                style: FluentTheme.of(context).typography.caption,
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: Button(
+                  onPressed: _selected.any((n) => n != '@' && n != 'Default')
+                      ? _deleteSelected
+                      : null,
+                  child: Text(l10n.deleteSelected),
+                ),
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
@@ -378,16 +501,24 @@ class _HomePageState extends State<HomePage> {
   Widget _metaRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(
-          width: 80,
-          child: Text(label, style: FluentTheme.of(context).typography.caption),
-        ),
-        Expanded(
-          child: Text(value.isEmpty ? '-' : value,
-              style: FluentTheme.of(context).typography.caption),
-        ),
-      ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              label,
+              style: FluentTheme.of(context).typography.caption,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value.isEmpty ? '-' : value,
+              style: FluentTheme.of(context).typography.caption,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

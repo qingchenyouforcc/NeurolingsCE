@@ -46,8 +46,9 @@ class _CodexPageState extends State<CodexPage> {
 
   Future<void> _loadThreadMemory() async {
     try {
-      final settings =
-          await context.read<AppState>().api.command({'command': 'get_settings'});
+      final settings = await context.read<AppState>().api.command({
+        'command': 'get_settings',
+      });
       if (!mounted) return;
       setState(() {
         _lastThreadId = settings['codex/lastThreadId'] as String? ?? '';
@@ -58,10 +59,9 @@ class _CodexPageState extends State<CodexPage> {
 
   Future<void> _pollStatus() async {
     try {
-      final status = await context
-          .read<AppState>()
-          .api
-          .command({'command': 'codex_server_status'});
+      final status = await context.read<AppState>().api.command({
+        'command': 'codex_server_status',
+      });
       if (!mounted) return;
       final threadId = status['thread_id'] as String? ?? '';
       final workspace = status['workspace'] as String? ?? '';
@@ -83,10 +83,11 @@ class _CodexPageState extends State<CodexPage> {
 
   Future<void> _persist(String key, dynamic value) async {
     try {
-      await context
-          .read<AppState>()
-          .api
-          .command({'command': 'set_settings', 'key': key, 'value': value});
+      await context.read<AppState>().api.command({
+        'command': 'set_settings',
+        'key': key,
+        'value': value,
+      });
     } catch (_) {}
   }
 
@@ -95,12 +96,16 @@ class _CodexPageState extends State<CodexPage> {
       await context.read<AppState>().api.command(payload);
     } catch (e) {
       if (!mounted) return;
-      displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
+      displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
             title: Text(AppLocalizations.of(context).error),
             content: Text(e.toString()),
-            severity: InfoBarSeverity.error);
-      });
+            severity: InfoBarSeverity.error,
+          );
+        },
+      );
     }
     await _pollStatus();
   }
@@ -118,20 +123,28 @@ class _CodexPageState extends State<CodexPage> {
     await _cmd({'command': 'codex_server_disconnect'});
   }
 
-  Future<void> _sendText({bool forcePlan = false}) async {
+  Future<void> _sendText({
+    bool forcePlan = false,
+    bool applyPlan = false,
+  }) async {
     final l10n = AppLocalizations.of(context);
     var text = _input.text.trim();
-    if (forcePlan) {
+    if (applyPlan) {
       text = 'Please begin implementing the confirmed plan.';
     }
     if (text.isEmpty) {
-      displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
-            title: Text(l10n.codexEmptyInput), severity: InfoBarSeverity.warning);
-      });
+      displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
+            title: Text(l10n.codexEmptyInput),
+            severity: InfoBarSeverity.warning,
+          );
+        },
+      );
       return;
     }
-    final usePlan = forcePlan ? false : _planMode;
+    final usePlan = forcePlan || (!applyPlan && _planMode);
     if (_running) {
       await _cmd({'command': 'codex_server_steer', 'text': text});
     } else {
@@ -153,32 +166,34 @@ class _CodexPageState extends State<CodexPage> {
     if (id.isEmpty) return;
     _activeInputId = id;
     final l10n = AppLocalizations.of(context);
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return _UserInputDialog(
-          input: input.cast<String, dynamic>(),
-          onSubmit: (answers) async {
-            await _cmd({
-              'command': 'codex_server_input',
-              'id': id,
-              'answers': answers,
-            });
-          },
-          onCancel: () async {
-            await _cmd({
-              'command': 'codex_server_input',
-              'id': id,
-              'answers': <String, dynamic>{},
-            });
-          },
-          l10n: l10n,
-        );
-      },
-    ).whenComplete(() {
-      _activeInputId = null;
-    }));
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return _UserInputDialog(
+            input: input.cast<String, dynamic>(),
+            onSubmit: (answers) async {
+              await _cmd({
+                'command': 'codex_server_input',
+                'id': id,
+                'answers': answers,
+              });
+            },
+            onCancel: () async {
+              await _cmd({
+                'command': 'codex_server_input',
+                'id': id,
+                'answers': <String, dynamic>{},
+              });
+            },
+            l10n: l10n,
+          );
+        },
+      ).whenComplete(() {
+        _activeInputId = null;
+      }),
+    );
   }
 
   @override
@@ -188,7 +203,8 @@ class _CodexPageState extends State<CodexPage> {
     final turnId = _status['turn_id'] as String? ?? '';
     final workspace = _status['workspace'] as String? ?? '';
     final plan = (_status['plan'] as Map?)?.cast<String, dynamic>() ?? {};
-    final planSteps = (plan['steps'] as List?)
+    final planSteps =
+        (plan['steps'] as List?)
             ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList() ??
@@ -199,7 +215,8 @@ class _CodexPageState extends State<CodexPage> {
         : (plan['explanation'] as String? ?? '');
     final finalMessage = _status['final_message'] as String? ?? '';
     final diagnostic = _status['diagnostic'] as String? ?? '';
-    final approvals = (_status['approvals'] as List?)
+    final approvals =
+        (_status['approvals'] as List?)
             ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList() ??
@@ -217,12 +234,18 @@ class _CodexPageState extends State<CodexPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(l10n.codexSession,
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  l10n.codexSession,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 _row(l10n.codexStatus, _state),
-                _row(l10n.codexThread,
-                    threadId.isEmpty ? '-' : threadId.substring(0, threadId.length.clamp(0, 16))),
+                _row(
+                  l10n.codexThread,
+                  threadId.isEmpty
+                      ? '-'
+                      : threadId.substring(0, threadId.length.clamp(0, 16)),
+                ),
                 _row(l10n.codexWorkspace, workspace.isEmpty ? '-' : workspace),
                 _row(l10n.codexTurn, turnId.isEmpty ? '-' : turnId),
               ],
@@ -251,35 +274,51 @@ class _CodexPageState extends State<CodexPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(l10n.codexConnection,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    l10n.codexConnection,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 8),
-                  Wrap(spacing: 8, runSpacing: 8, children: [
-                    if (_state == 'Stopped' || _state == 'Blocked')
-                      FilledButton(
-                        onPressed: _connect,
-                        child: Text(l10n.codexConnect),
-                      )
-                    else
-                      Button(onPressed: _disconnect, child: Text(l10n.codexDisconnect)),
-                    Button(
-                      onPressed: _ready ? () => _cmd({'command': 'codex_server_new_thread', 'cwd': _lastWorkspace}) : null,
-                      child: Text(l10n.codexNewSession),
-                    ),
-                    Button(
-                      onPressed: _ready && _lastThreadId.isNotEmpty
-                          ? () => _cmd({
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (_state == 'Stopped' || _state == 'Blocked')
+                        FilledButton(
+                          onPressed: _connect,
+                          child: Text(l10n.codexConnect),
+                        )
+                      else
+                        Button(
+                          onPressed: _disconnect,
+                          child: Text(l10n.codexDisconnect),
+                        ),
+                      Button(
+                        onPressed: _ready
+                            ? () => _cmd({
+                                'command': 'codex_server_new_thread',
+                                'cwd': _lastWorkspace,
+                              })
+                            : null,
+                        child: Text(l10n.codexNewSession),
+                      ),
+                      Button(
+                        onPressed: _ready && _lastThreadId.isNotEmpty
+                            ? () => _cmd({
                                 'command': 'codex_server_resume',
                                 'thread_id': _lastThreadId,
                               })
-                          : null,
-                      child: Text(l10n.codexResume),
-                    ),
-                  ]),
+                            : null,
+                        child: Text(l10n.codexResume),
+                      ),
+                    ],
+                  ),
                   if (diagnostic.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(diagnostic,
-                        style: FluentTheme.of(context).typography.caption),
+                    Text(
+                      diagnostic,
+                      style: FluentTheme.of(context).typography.caption,
+                    ),
                   ],
                 ],
               ),
@@ -295,12 +334,16 @@ class _CodexPageState extends State<CodexPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${l10n.codexApprovals} (${approvals.length})',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    '${l10n.codexApprovals} (${approvals.length})',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 8),
                   if (approvals.isEmpty)
-                    Text(l10n.codexNoApprovals,
-                        style: FluentTheme.of(context).typography.caption)
+                    Text(
+                      l10n.codexNoApprovals,
+                      style: FluentTheme.of(context).typography.caption,
+                    )
                   else
                     for (final approval in approvals)
                       _approvalTile(context, approval),
@@ -318,12 +361,16 @@ class _CodexPageState extends State<CodexPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(l10n.codexPlan,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    l10n.codexPlan,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 8),
                   if (planSteps.isEmpty)
-                    Text(l10n.codexNoPlan,
-                        style: FluentTheme.of(context).typography.caption)
+                    Text(
+                      l10n.codexNoPlan,
+                      style: FluentTheme.of(context).typography.caption,
+                    )
                   else
                     for (final step in planSteps)
                       Text(
@@ -348,27 +395,37 @@ class _CodexPageState extends State<CodexPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(l10n.codexMessage,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    l10n.codexMessage,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 8),
-                  Row(children: [
-                    Text('${l10n.codexMode}: '),
-                    ComboBox<bool>(
-                      value: _planMode,
-                      items: [
-                        ComboBoxItem(value: false, child: Text(l10n.codexModeDefault)),
-                        ComboBoxItem(
+                  Row(
+                    children: [
+                      Text('${l10n.codexMode}: '),
+                      ComboBox<bool>(
+                        value: _planMode,
+                        items: [
+                          ComboBoxItem(
+                            value: false,
+                            child: Text(l10n.codexModeDefault),
+                          ),
+                          ComboBoxItem(
                             value: true,
                             child: planSupported
                                 ? Text(l10n.codexModePlan)
-                                : Text('${l10n.codexModePlan} (${l10n.codexPlanUnsupported})')),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() => _planMode = v);
-                      },
-                    ),
-                  ]),
+                                : Text(
+                                    '${l10n.codexModePlan} (${l10n.codexPlanUnsupported})',
+                                  ),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _planMode = v);
+                        },
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 90,
@@ -379,28 +436,36 @@ class _CodexPageState extends State<CodexPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(spacing: 8, runSpacing: 8, children: [
-                    FilledButton(
-                      onPressed: _ready || _running ? () => _sendText() : null,
-                      child: Text(l10n.codexSend),
-                    ),
-                    Button(
-                      onPressed: planFinal && planText.isNotEmpty && _ready
-                          ? () => _sendText(forcePlan: true)
-                          : null,
-                      child: Text(l10n.codexImplementPlan),
-                    ),
-                    Button(
-                      onPressed: _ready ? () => _sendText(forcePlan: true) : null,
-                      child: Text(l10n.codexModifyPlan),
-                    ),
-                    Button(
-                      onPressed: _running
-                          ? () => _cmd({'command': 'codex_server_interrupt'})
-                          : null,
-                      child: Text(l10n.codexAbort),
-                    ),
-                  ]),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton(
+                        onPressed: _ready || _running
+                            ? () => _sendText()
+                            : null,
+                        child: Text(l10n.codexSend),
+                      ),
+                      Button(
+                        onPressed: planFinal && planText.isNotEmpty && _ready
+                            ? () => _sendText(applyPlan: true)
+                            : null,
+                        child: Text(l10n.codexImplementPlan),
+                      ),
+                      Button(
+                        onPressed: _ready
+                            ? () => _sendText(forcePlan: true)
+                            : null,
+                        child: Text(l10n.codexModifyPlan),
+                      ),
+                      Button(
+                        onPressed: _running
+                            ? () => _cmd({'command': 'codex_server_interrupt'})
+                            : null,
+                        child: Text(l10n.codexAbort),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   if (finalMessage.trim().isNotEmpty)
                     SelectableText(
@@ -408,8 +473,10 @@ class _CodexPageState extends State<CodexPage> {
                       style: FluentTheme.of(context).typography.body,
                     )
                   else
-                    Text(l10n.codexNoReply,
-                        style: FluentTheme.of(context).typography.caption),
+                    Text(
+                      l10n.codexNoReply,
+                      style: FluentTheme.of(context).typography.caption,
+                    ),
                 ],
               ),
             ),
@@ -422,21 +489,26 @@ class _CodexPageState extends State<CodexPage> {
   Widget _row(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(width: 90, child: Text(label)),
-        Expanded(child: SelectableText(value)),
-      ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 90, child: Text(label)),
+          Expanded(child: SelectableText(value)),
+        ],
+      ),
     );
   }
 
   Widget _approvalTile(BuildContext context, Map<String, dynamic> approval) {
     final l10n = AppLocalizations.of(context);
-    final decisions = (approval['available_decisions'] as List?)
+    final decisions =
+        (approval['available_decisions'] as List?)
             ?.map((e) => e.toString())
             .toList() ??
         <String>[];
     bool has(String d) => decisions.isEmpty || decisions.contains(d);
-    final changes = (approval['changes'] as List?)
+    final changes =
+        (approval['changes'] as List?)
             ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList() ??
@@ -445,66 +517,81 @@ class _CodexPageState extends State<CodexPage> {
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
         borderRadius: BorderRadius.circular(7),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${approval['kind'] ?? ''}',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(
+            '${approval['kind'] ?? ''}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
           if ((approval['command'] as String?)?.isNotEmpty == true)
-            SelectableText(approval['command'] as String,
-                style: const TextStyle(fontFamily: 'Consolas, monospace', fontSize: 11)),
+            SelectableText(
+              approval['command'] as String,
+              style: const TextStyle(
+                fontFamily: 'Consolas, monospace',
+                fontSize: 11,
+              ),
+            ),
           if ((approval['reason'] as String?)?.isNotEmpty == true)
-            Text(approval['reason'] as String,
-                style: FluentTheme.of(context).typography.caption),
+            Text(
+              approval['reason'] as String,
+              style: FluentTheme.of(context).typography.caption,
+            ),
           for (final change in changes)
-            Text('${change['kind']}: ${change['path']}',
-                style: FluentTheme.of(context).typography.caption),
+            Text(
+              '${change['kind']}: ${change['path']}',
+              style: FluentTheme.of(context).typography.caption,
+            ),
           const SizedBox(height: 6),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            Button(
-              onPressed: has('decline')
-                  ? () => _cmd({
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              Button(
+                onPressed: has('decline')
+                    ? () => _cmd({
                         'command': 'codex_server_resolve',
                         'id': approval['id'],
                         'decision': 'decline',
                       })
-                  : null,
-              child: Text(l10n.codexDecline),
-            ),
-            Button(
-              onPressed: has('accept')
-                  ? () => _cmd({
+                    : null,
+                child: Text(l10n.codexDecline),
+              ),
+              Button(
+                onPressed: has('accept')
+                    ? () => _cmd({
                         'command': 'codex_server_resolve',
                         'id': approval['id'],
                         'decision': 'accept',
                       })
-                  : null,
-              child: Text(l10n.codexAllowOnce),
-            ),
-            Button(
-              onPressed: has('acceptForSession')
-                  ? () => _cmd({
+                    : null,
+                child: Text(l10n.codexAllowOnce),
+              ),
+              Button(
+                onPressed: has('acceptForSession')
+                    ? () => _cmd({
                         'command': 'codex_server_resolve',
                         'id': approval['id'],
                         'decision': 'acceptForSession',
                       })
-                  : null,
-              child: Text(l10n.codexAllowSession),
-            ),
-            Button(
-              onPressed: has('cancel')
-                  ? () => _cmd({
+                    : null,
+                child: Text(l10n.codexAllowSession),
+              ),
+              Button(
+                onPressed: has('cancel')
+                    ? () => _cmd({
                         'command': 'codex_server_resolve',
                         'id': approval['id'],
                         'decision': 'cancel',
                       })
-                  : null,
-              child: Text(l10n.codexDeclineStop),
-            ),
-          ]),
+                    : null,
+                child: Text(l10n.codexDeclineStop),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -544,7 +631,8 @@ class _UserInputDialogState extends State<_UserInputDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = widget.l10n;
-    final questions = (widget.input['questions'] as List?)
+    final questions =
+        (widget.input['questions'] as List?)
             ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList() ??
@@ -601,7 +689,8 @@ class _UserInputDialogState extends State<_UserInputDialog> {
     final qid = question['id'] as String? ?? '';
     final isOther = question['is_other'] == true;
     final isSecret = question['is_secret'] == true;
-    final options = (question['options'] as List?)
+    final options =
+        (question['options'] as List?)
             ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList() ??
@@ -610,8 +699,10 @@ class _UserInputDialogState extends State<_UserInputDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if ((question['header'] as String?)?.isNotEmpty == true)
-          Text(question['header'] as String,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(
+            question['header'] as String,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         Text(question['question'] as String? ?? ''),
         const SizedBox(height: 6),
         if (isOther)

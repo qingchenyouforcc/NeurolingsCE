@@ -153,7 +153,8 @@ impl Action for MoveWithTurn {
             }
         } else if self.anim.base.vars.has("TargetY") {
             let y = self.anim.base.vars.get_num("TargetY", 0.0);
-            if passed(start.y, end.y, y) {
+            // 行为基准：越过判定恒用水平坐标（见 movement.rs 的说明）。
+            if passed(start.x, end.x, y) {
                 mascot.borrow_mut().anchor.y = y;
                 return Ok(false);
             }

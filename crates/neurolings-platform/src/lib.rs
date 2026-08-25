@@ -4,8 +4,10 @@
 //! Windows 使用分层窗口后端（逐像素 alpha + 命中穿透），Linux 使用
 //! X11 ARGB 后端（Wayland 会话经 XWayland 运行），macOS 使用 NSPanel 后端。
 //!
-//! 坐标约定：全部使用物理像素。Windows 后端在启动时声明 PerMonitorV2
-//! DPI 感知，保证光标、显示器与窗口矩形处于同一坐标空间。
+//! 坐标约定：运行时与引擎使用全局统一的 96-DPI 逻辑像素（与 Qt/CE 一致，
+//! 物理像素 = 逻辑像素 × 所在显示器的 scale）。Windows 后端在启动时声明
+//! PerMonitorV2 DPI 感知，在进出 Win32 API 时按**所在显示器各自的** DPI
+//! 做物理↔逻辑换算，并把桌宠位图按所在屏 DPI 放大绘制。
 
 #[cfg(windows)]
 pub mod windows;
@@ -70,14 +72,21 @@ impl Rect {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenInfo {
+    /// 显示器矩形（96-DPI 逻辑像素，物理矩形 ÷ 本屏 scale）。
     pub monitor: Rect,
+    /// 工作区矩形（同一逻辑坐标系）。
     pub work_area: Rect,
+    /// 本屏缩放：物理像素 / 逻辑像素（DPI ÷ 96；96 DPI 时为 1.0）。
+    pub scale: f64,
 }
 
 /// 前台活动窗口的快照；句柄供窗口推移功能回指。
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveWindowInfo {
     pub handle: u64,
+    /// 窗口身份标识（对齐 C++ ActiveWindow::uid）：跨帧判断是否为同一窗口。
+    /// Windows 取 HWND 值；无 uid 概念的平台置 0。
+    pub uid: u64,
     pub area: Rect,
 }
 

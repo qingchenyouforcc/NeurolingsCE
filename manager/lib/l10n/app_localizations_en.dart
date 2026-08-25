@@ -33,11 +33,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navAbout => 'About';
 
   @override
-  String get closeConfirmTitle => 'Close NeurolingsCE?';
+  String get closeConfirmTitle => 'Close NeurolingsCE';
 
   @override
-  String get closeConfirmBody =>
-      'Do you want to close NeurolingsCE? All mascots will be dismissed.';
+  String get closeConfirmBody => 'Do you want to close NeurolingsCE?';
 
   @override
   String get closeKeepOpen => 'Keep open';
@@ -128,7 +127,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get close => 'Close';
 
   @override
-  String get homeSelectTemplate => 'Select a mascot to see details.';
+  String get homeTitle => 'Mascot Manager';
+
+  @override
+  String get homePageDescription =>
+      'Browse your mascot library, start companions, and manage installed packages.';
+
+  @override
+  String get homeSelectTemplate => 'No mascot selected';
+
+  @override
+  String statusBar(int mascots, int templates) {
+    return '  Mascots: $mascots  |  Templates: $templates';
+  }
+
+  @override
+  String inspectorTitle(Object name) {
+    return 'Inspector — $name';
+  }
+
+  @override
+  String get inspectorClose => 'Close inspector';
+
+  @override
+  String get combinationsOfflineHint => 'Ensure the runtime is running.';
 
   @override
   String get homeImportDone => 'Import finished';
@@ -483,6 +505,87 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutThirdParty => 'Third-party';
+
+  @override
+  String get storeIndex => 'Store index';
+
+  @override
+  String get storeNotConfigured => '(not configured)';
+
+  @override
+  String get storeRuntimeOffline => 'Runtime offline';
+
+  @override
+  String get storeRuntimeOfflineHint =>
+      'Start the runtime from Home before browsing the store.';
+
+  @override
+  String get storeUnconfigured => 'Store is not configured';
+
+  @override
+  String get storeUnconfiguredHint =>
+      'Set NEUROLINGSCE_MASCOT_INDEX_URL to a store index URL and restart the runtime.';
+
+  @override
+  String get storeLoadFailed => 'Failed to load the index';
+
+  @override
+  String get storeCacheWarning => 'Cache warning';
+
+  @override
+  String get storeSearchHint => 'Search by name, summary, ID, or author...';
+
+  @override
+  String get storeAllTags => 'All tags';
+
+  @override
+  String get storeEmpty => 'No mascot packages in the store';
+
+  @override
+  String get storeNoMatch => 'No mascots match your filters';
+
+  @override
+  String storeCount(int count) {
+    return '$count mascots';
+  }
+
+  @override
+  String storeTag(Object tag) {
+    return 'tag: $tag';
+  }
+
+  @override
+  String get storeFromCache => 'from cache';
+
+  @override
+  String get storeDetails => 'Details';
+
+  @override
+  String get storeInstall => 'Install';
+
+  @override
+  String storeAuthors(Object names) {
+    return 'Authors: $names';
+  }
+
+  @override
+  String storeMinVersion(Object version) {
+    return 'Minimum version: $version';
+  }
+
+  @override
+  String storeInstallOk(Object name) {
+    return 'Installed: $name';
+  }
+
+  @override
+  String get storeInstallOkHint =>
+      'SHA-256 verified and imported. Summon it from Home.';
+
+  @override
+  String storeInstallFailed(Object name) {
+    return 'Install failed: $name';
+  }
 
   @override
   String get storeCommunity => 'Community';

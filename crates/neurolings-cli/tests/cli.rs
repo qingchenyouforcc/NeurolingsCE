@@ -173,6 +173,8 @@ fn mascot_list_on_temp_storage() {
     std::fs::create_dir_all(&storage).unwrap();
 
     // 安装两个模板：一个 .mascot 文件、一个解压目录。
+    // 既定契约：迁移后只列 *.mascot 文件，
+    // 带 info.json 的散开目录不再列出。
     std::fs::copy(
         Path::new(FIXTURE_DIR).join("Eviling.mascot"),
         storage.join("Eviling.mascot"),
@@ -194,15 +196,11 @@ fn mascot_list_on_temp_storage() {
     assert_eq!(out.exit_code, 0, "stderr = {}", out.stderr);
     let value = parse_value(&out.stdout);
     let templates = value["templates"].as_array().expect("templates array");
-    assert_eq!(templates.len(), 3);
+    assert_eq!(templates.len(), 2);
     assert_eq!(templates[0]["id"], 0);
-    assert_eq!(templates[0]["name"], "@");
+    assert_eq!(templates[0]["name"], "Default");
     assert_eq!(templates[1]["id"], 1);
     assert_eq!(templates[1]["name"], "Eviling");
-    assert_eq!(templates[2]["id"], 2);
-    assert_eq!(templates[2]["name"], "Zebra");
-    assert_eq!(templates[2]["version"], "2.0");
-    assert_eq!(templates[2]["author"], "a");
 
     // 文本输出。
     let out = run_to_output(
@@ -210,10 +208,9 @@ fn mascot_list_on_temp_storage() {
         Some(storage.clone()),
     );
     assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("[0] @"));
+    assert!(out.stdout.contains("[0] Default"));
     assert!(out.stdout.contains("[1] Eviling"));
-    assert!(out.stdout.contains("[2] Zebra"));
-    assert!(out.stdout.contains("  Version: 2.0"));
+    assert!(!out.stdout.contains("Zebra"));
 }
 
 #[test]
@@ -254,6 +251,23 @@ fn mascot_add_and_remove_round_trip() {
         Some(storage),
     );
     assert_eq!(out.exit_code, 2);
+}
+
+#[test]
+fn mascot_remove_does_not_delete_non_package_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let storage = temp.path().join("storage");
+    let unrelated = storage.join("Cerber");
+    std::fs::create_dir_all(&unrelated).unwrap();
+    std::fs::write(unrelated.join("keep.txt"), "keep").unwrap();
+
+    let out = run_to_output(
+        &args(&["NeurolingsCE-cli", "--mascot", "remove", "Cerber"]),
+        Some(storage),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("ERROR: No such mascot template"));
+    assert!(unrelated.join("keep.txt").is_file());
 }
 
 #[test]
@@ -328,6 +342,31 @@ fn usage_errors_exit_two() {
 }
 
 #[test]
+fn numeric_options_reject_values_outside_i32_range() {
+    let cases: &[&[&str]] = &[
+        &[
+            "NeurolingsCE-cli",
+            "--connect-timeout-ms",
+            "2147483648",
+            "--version",
+        ],
+        &[
+            "NeurolingsCE-cli",
+            "--summon",
+            "mascot",
+            "--data-id",
+            "2147483648",
+        ],
+        &["NeurolingsCE-cli", "spawn", "--data-id", "2147483648"],
+    ];
+    for case in cases {
+        let out = run_to_output(&args(case), None);
+        assert_eq!(out.exit_code, 2, "case = {case:?}");
+        assert!(out.stderr.starts_with("ERROR: "), "case = {case:?}");
+    }
+}
+
+#[test]
 fn stop_is_idempotent_without_a_running_runtime() {
     // --stop 从不自动拉起运行时；没有运行时也视为成功。
     // 若恰好有运行时在跑则将其停止；两种情况的契约输出都是
@@ -355,4 +394,24 @@ fn parse_errors_respect_json_flag_seen_so_far() {
         }
         _ => panic!("expected parse failure"),
     }
+}
+
+#[test]
+fn codex_notify_rejects_invalid_activity_during_parse() {
+    let out = run_to_output(
+        &args(&[
+            "NeurolingsCE-cli",
+            "--codex-notify",
+            r#"{"type":"session-title-updated"}"#,
+        ]),
+        None,
+    );
+    assert_eq!(out.exit_code, 2);
+    assert!(
+        out.stderr.contains(
+            "ERROR: Invalid Codex notification: new session notification requires a title"
+        ),
+        "stderr = {}",
+        out.stderr
+    );
 }
