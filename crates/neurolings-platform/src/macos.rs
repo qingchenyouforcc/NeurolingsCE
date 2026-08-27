@@ -17,6 +17,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     NSDate, NSDefaultRunLoopMode, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    ns_string,
 };
 
 use crate::{
@@ -114,10 +115,6 @@ unsafe extern "C" {
     fn AXUIElementGetPid(element: *const c_void, pid: *mut i32) -> AxError;
     fn AXValueGetValue(value: *const c_void, value_type: i32, out_value: *mut c_void) -> u8;
     fn _AXUIElementGetWindow(element: *const c_void, window_id: *mut u32) -> AxError;
-
-    static kAXFocusedWindowAttribute: *const c_void;
-    static kAXPositionAttribute: *const c_void;
-    static kAXSizeAttribute: *const c_void;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -142,8 +139,9 @@ impl Drop for AxObject {
     }
 }
 
-fn ax_copy_attribute(element: &AxObject, attribute: *const c_void) -> Option<AxObject> {
+fn ax_copy_attribute(element: &AxObject, attribute: &NSString) -> Option<AxObject> {
     let mut value = std::ptr::null();
+    let attribute = std::ptr::from_ref(attribute).cast();
     let result = unsafe { AXUIElementCopyAttributeValue(element.0, attribute, &mut value) };
     (result == 0).then(|| AxObject::from_owned(value)).flatten()
 }
@@ -590,15 +588,15 @@ impl MascotBackend for MacOSBackend {
             frontmost_pid
         };
         let app = AxObject::from_owned(unsafe { AXUIElementCreateApplication(pid) })?;
-        let focused = ax_copy_attribute(&app, unsafe { kAXFocusedWindowAttribute })?;
+        let focused = ax_copy_attribute(&app, ns_string!("AXFocusedWindow"))?;
 
         let mut focused_pid = 0i32;
         if unsafe { AXUIElementGetPid(focused.0, &mut focused_pid) } != 0 || focused_pid == own_pid
         {
             return None;
         }
-        let position = ax_copy_attribute(&focused, unsafe { kAXPositionAttribute })?;
-        let size = ax_copy_attribute(&focused, unsafe { kAXSizeAttribute })?;
+        let position = ax_copy_attribute(&focused, ns_string!("AXPosition"))?;
+        let size = ax_copy_attribute(&focused, ns_string!("AXSize"))?;
         let mut origin = NSPoint::new(0.0, 0.0);
         let mut dimensions = NSSize::new(0.0, 0.0);
         if unsafe {
