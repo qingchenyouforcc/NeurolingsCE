@@ -47,6 +47,24 @@ impl CommandService {
         &mut self.runtime
     }
 
+    /// 返回单个 mascot 的 HTTP/IPC 响应对象。
+    pub fn get_mascot(&self, id: i32) -> Result<Value, ApiError> {
+        let mascot = self.runtime.get(id).map_err(map_runtime_error)?;
+        Ok(json!({ "mascot": to_info(mascot) }))
+    }
+
+    /// 返回单个已加载模板的响应对象。
+    pub fn get_loaded_mascot(&self, id: i32) -> Result<Value, ApiError> {
+        let mascot = self
+            .loaded
+            .iter()
+            .find(|mascot| mascot.id == id)
+            .ok_or_else(|| {
+                ApiError::failure(404, "loaded_mascot_not_found", "No such loaded mascot")
+            })?;
+        Ok(json!({ "loaded_mascot": mascot }))
+    }
+
     /// 执行一个已解析的 API 请求并生成稳定 JSON 对象。
     pub fn execute(&mut self, request: ApiRequest) -> Result<Value, ApiError> {
         if self.stopped && !matches!(request.command, Command::Ping | Command::StopRuntime) {

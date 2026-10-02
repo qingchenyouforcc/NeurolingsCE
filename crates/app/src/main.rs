@@ -132,10 +132,7 @@ fn handle_http_client(mut stream: TcpStream, service: SharedService) -> io::Resu
                 http::HttpRoute::GetMascot { id } => service
                     .lock()
                     .map_err(|_| io::Error::other("service lock poisoned"))?
-                    .execute(
-                        api::ApiRequest::new(api::Command::ListMascots)
-                            .with_field("selector", serde_json::json!(id.to_string())),
-                    ),
+                    .get_mascot(id),
                 http::HttpRoute::AlterMascot { id, patch } => {
                     let mut request = api::ApiRequest::new(api::Command::AlterMascot)
                         .with_field("id", serde_json::json!(id));
@@ -150,10 +147,7 @@ fn handle_http_client(mut stream: TcpStream, service: SharedService) -> io::Resu
                 http::HttpRoute::GetLoadedMascot { id } => service
                     .lock()
                     .map_err(|_| io::Error::other("service lock poisoned"))?
-                    .execute(
-                        api::ApiRequest::new(api::Command::ListLoadedMascots)
-                            .with_field("id", serde_json::json!(id)),
-                    ),
+                    .get_loaded_mascot(id),
                 http::HttpRoute::Preview { .. } => Err(api::ApiError::failure(
                     404,
                     "preview_not_found",
