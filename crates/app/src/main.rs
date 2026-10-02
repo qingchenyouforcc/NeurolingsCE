@@ -15,6 +15,13 @@ fn main() {
         println!("NeurolingsCE {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if args.iter().any(|arg| arg == "--gui") {
+        if let Err(error) = ui::run() {
+            eprintln!("NeurolingsCE GUI failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args.iter().any(|arg| arg == "--stdio") {
         serve_jsonl(io::stdin().lock(), io::stdout().lock());
         return;
