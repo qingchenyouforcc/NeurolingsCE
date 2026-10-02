@@ -447,6 +447,26 @@ pub fn summon_request(command: &SummonCommand) -> ApiRequest {
     }
 }
 
+/// 将需要访问运行时的 CLI 命令转换为统一 API 请求。
+pub fn request_for_command(command: &CliCommand) -> Option<ApiRequest> {
+    match command {
+        CliCommand::List => Some(ApiRequest::new(Command::ListMascots)),
+        CliCommand::Summon(command) => Some(summon_request(command)),
+        CliCommand::Close { selector } => Some(
+            ApiRequest::new(Command::DismissAllMascots)
+                .with_field("selector", Value::String(selector.clone())),
+        ),
+        CliCommand::CloseAll => Some(ApiRequest::new(Command::DismissAllMascots)),
+        CliCommand::Stop => Some(ApiRequest::new(Command::StopRuntime)),
+        CliCommand::CodexNotify { payload } => Some(
+            ApiRequest::new(Command::ShowCodexNotification)
+                .with_field("payload", Value::String(payload.clone())),
+        ),
+        CliCommand::Legacy(request) => Some(request.clone()),
+        CliCommand::Help | CliCommand::Version | CliCommand::Mascot(_) => None,
+    }
+}
+
 fn spawn_request(request: SpawnMascotRequest, label: &Option<String>) -> ApiRequest {
     let mut value = serde_json::to_value(request).expect("协议结构可序列化");
     let fields = value.as_object_mut().expect("spawn request 必须是 object");
@@ -514,5 +534,19 @@ mod tests {
             r#"{"code":"unknown_command","error":"unknown command","exit_code":2}"#
         );
         assert!(!output.contains('\n'));
+    }
+
+    #[test]
+    fn converts_runtime_commands_to_api_requests() {
+        let command = CliCommand::Close {
+            selector: "Default".into(),
+        };
+        let request = request_for_command(&command).unwrap();
+        assert_eq!(request.command, Command::DismissAllMascots);
+        assert_eq!(
+            request.field("selector"),
+            Some(&Value::String("Default".into()))
+        );
+        assert!(request_for_command(&CliCommand::Help).is_none());
     }
 }
