@@ -52,6 +52,9 @@ version = "0.1.0"
 [[package]]
 name = "engine"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "errno"
@@ -87,6 +90,11 @@ version = "0.1.0"
 [[package]]
 name = "ipc"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "itoa"
