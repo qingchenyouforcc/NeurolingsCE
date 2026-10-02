@@ -40,3 +40,19 @@ fn expression_condition_controls_behavior() {
     runtime.tick(1);
     assert_eq!(runtime.mascots()[0].position(), (0.0, 0.0));
 }
+
+#[test]
+fn bundled_default_mascot_xml_is_readable() {
+    let actions = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/DefaultMascot/actions.xml"
+    ))
+    .unwrap();
+    let behaviors = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/DefaultMascot/behaviors.xml"
+    ))
+    .unwrap();
+    let model = EngineModel::from_xml(&actions, &behaviors).unwrap();
+    assert!(!model.behaviors().is_empty());
+}

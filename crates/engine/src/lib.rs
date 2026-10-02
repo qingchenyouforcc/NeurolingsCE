@@ -317,7 +317,11 @@ impl EngineModel {
             .map_err(|error| ModelError::Xml(error.to_string()))?;
         let mut actions = BTreeMap::new();
         let root = actions_doc.root_element();
-        for node in root.children().filter(|node| {
+        let action_parent = root
+            .descendants()
+            .find(|node| node.tag_name().name().eq_ignore_ascii_case("actionlist"))
+            .unwrap_or(root);
+        for node in action_parent.children().filter(|node| {
             node.is_element() && node.tag_name().name().eq_ignore_ascii_case("action")
         }) {
             let action = parse_action(node)?;
@@ -328,7 +332,7 @@ impl EngineModel {
             actions.insert(name, action);
         }
         let mut behaviors = Vec::new();
-        for node in behaviors_doc.root_element().children().filter(|node| {
+        for node in behaviors_doc.root_element().descendants().filter(|node| {
             node.is_element() && node.tag_name().name().eq_ignore_ascii_case("behavior")
         }) {
             let name = attribute(node, "name")
@@ -337,18 +341,32 @@ impl EngineModel {
                 .unwrap_or("1")
                 .parse()
                 .map_err(|_| ModelError::Attribute("frequency".into()))?;
-            let condition = attribute(node, "condition").map(str::to_owned);
-            let action_node = node
-                .children()
-                .find(|child| {
-                    child.is_element() && child.tag_name().name().eq_ignore_ascii_case("action")
-                })
-                .ok_or_else(|| ModelError::Missing("behavior action".into()))?;
+            let condition = attribute(node, "condition")
+                .map(normalize_condition)
+                .or_else(|| {
+                    node.ancestors()
+                        .find(|ancestor| {
+                            ancestor.tag_name().name().eq_ignore_ascii_case("condition")
+                        })
+                        .and_then(|ancestor| attribute(ancestor, "condition"))
+                        .map(normalize_condition)
+                });
+            let action_node = node.children().find(|child| {
+                child.is_element() && child.tag_name().name().eq_ignore_ascii_case("action")
+            });
+            let action = if let Some(action_node) = action_node {
+                parse_action(action_node)?
+            } else {
+                Action {
+                    name: None,
+                    kind: ActionKind::Reference(name.to_owned()),
+                }
+            };
             behaviors.push(Behavior {
                 name: name.to_owned(),
                 frequency,
                 condition,
-                action: parse_action(action_node)?,
+                action,
             });
         }
         Ok(Self { actions, behaviors })
@@ -382,15 +400,15 @@ fn parse_action<'a, 'input>(node: Node<'a, 'input>) -> Result<Action, ModelError
         .collect::<Vec<_>>();
     let kind = match typ.as_deref() {
         Some("offset") => ActionKind::Offset {
-            dx: parse_attr(node, "dx")?,
-            dy: parse_attr(node, "dy")?,
+            dx: parse_attr_or_pose(node, "dx", 0.0)?,
+            dy: parse_attr_or_pose(node, "dy", 0.0)?,
         },
         Some("move") | Some("movewithturn") => ActionKind::Move {
-            dx: parse_attr(node, "dx")?,
-            dy: parse_attr(node, "dy")?,
+            dx: parse_attr_or_pose(node, "dx", 0.0)?,
+            dy: parse_attr_or_pose(node, "dy", 0.0)?,
         },
         Some("stay") => ActionKind::Stay {
-            duration: parse_attr::<u64>(node, "duration")?,
+            duration: parse_attr_or_pose(node, "duration", 1.0)? as u64,
         },
         Some("selfdestruct") | Some("self_destruct") => ActionKind::SelfDestruct,
         Some("instant") => ActionKind::Instant,
@@ -410,16 +428,60 @@ fn parse_action<'a, 'input>(node: Node<'a, 'input>) -> Result<Action, ModelError
             name.clone()
                 .ok_or_else(|| ModelError::Missing("action type or name".into()))?,
         ),
-        Some(other) => return Err(ModelError::Attribute(format!("type={other}"))),
+        Some("embedded") | Some("animate") | Some("fall") | Some("jump") | Some("look")
+        | Some("turn") | Some("interact") | Some("breed") | Some("transform") | Some("resist")
+        | Some("dragged") | Some("scanmove") | Some("select") => ActionKind::Instant,
+        Some(_) => ActionKind::Instant,
     };
     Ok(Action { name, kind })
 }
 
-fn parse_attr<T: std::str::FromStr>(node: Node<'_, '_>, name: &str) -> Result<T, ModelError> {
-    attribute(node, name)
-        .ok_or_else(|| ModelError::Missing(name.into()))?
+fn parse_attr_or_pose(node: Node<'_, '_>, name: &str, fallback: f64) -> Result<f64, ModelError> {
+    if let Some(value) = attribute(node, name) {
+        return value
+            .parse()
+            .map_err(|_| ModelError::Attribute(name.into()));
+    }
+    let pose_attribute = if name == "duration" {
+        "duration"
+    } else {
+        "velocity"
+    };
+    let Some(value) = node
+        .descendants()
+        .find_map(|child| attribute(child, pose_attribute))
+    else {
+        return Ok(fallback);
+    };
+    if pose_attribute == "velocity" {
+        let mut parts = value.split(',');
+        if name == "dx" {
+            return parts
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .parse()
+                .map_err(|_| ModelError::Attribute(name.into()));
+        }
+        return parts
+            .nth(1)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .map_err(|_| ModelError::Attribute(name.into()));
+    }
+    value
         .parse()
         .map_err(|_| ModelError::Attribute(name.into()))
+}
+
+fn normalize_condition(value: &str) -> String {
+    let value = value.trim();
+    if (value.starts_with("#{") || value.starts_with("${")) && value.ends_with('}') {
+        value[2..value.len() - 1].trim().to_owned()
+    } else {
+        value.to_owned()
+    }
 }
 
 /// 运行时的单个 mascot 状态。
