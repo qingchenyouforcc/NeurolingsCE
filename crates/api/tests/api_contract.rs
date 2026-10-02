@@ -1,6 +1,6 @@
 use api::{
-    Anchor, ApiError, ApiRequest, CliLabel, Command, MascotInfo, MascotPatch, Selector,
-    SpawnMascotRequest,
+    Anchor, ApiError, ApiRequest, CliLabel, Command, MascotCommandStatus, MascotInfo, MascotPatch,
+    Selector, SpawnMascotRequest,
 };
 use serde_json::json;
 
@@ -115,4 +115,16 @@ fn api_error_serialization_omits_missing_code_but_keeps_status() {
         serde_json::to_value(error).unwrap(),
         json!({"error": "temporary unavailable", "status": 503})
     );
+}
+
+#[test]
+fn command_status_exposes_success_and_failure_helpers() {
+    let success = MascotCommandStatus::success();
+    assert!(success.ok());
+
+    let failure = MascotCommandStatus::failure(404, "mascot_not_found", "No such mascot");
+    assert!(!failure.ok());
+    assert_eq!(failure.status, 404);
+    assert_eq!(failure.code.as_deref(), Some("mascot_not_found"));
+    assert_eq!(failure.message, "No such mascot");
 }

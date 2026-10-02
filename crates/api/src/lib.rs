@@ -71,6 +71,16 @@ impl ApiError {
         Self::new(400, Some("bad_request".into()), message)
     }
 
+    /// 创建成功状态，供运行时服务使用。
+    pub fn success() -> Self {
+        Self::new(200, None, "")
+    }
+
+    /// 创建带稳定错误代码的失败状态。
+    pub fn failure(status: u16, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(status, Some(code.into()), message)
+    }
+
     /// 判断状态码是否表示成功。
     pub fn ok(&self) -> bool {
         (200..300).contains(&self.status)
