@@ -5,6 +5,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use roxmltree::Node;
+
 /// 表达式运行时可见的值。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -239,14 +241,390 @@ impl Expression {
 }
 
 /// 轻量级表达式引擎，负责复用上下文并提供源码入口。
+#[derive(Default)]
 pub struct Engine {
     context: EvalContext,
 }
 
-impl Default for Engine {
-    fn default() -> Self {
+/// 引擎动作种类；解析后不再依赖 XML 节点。
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActionKind {
+    /// 一次性改变锚点。
+    Offset { dx: f64, dy: f64 },
+    /// 持续按位移移动。
+    Move { dx: f64, dy: f64 },
+    /// 等待指定 subtick。
+    Stay { duration: u64 },
+    /// 标记 mascot 自毁。
+    SelfDestruct,
+    /// 立即完成的空动作。
+    Instant,
+    /// 依次执行子动作。
+    Sequence(Vec<Action>),
+    /// 延迟引用已注册动作。
+    Reference(String),
+}
+
+/// 已解析动作。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Action {
+    /// 可选动作名。
+    pub name: Option<String>,
+    /// 动作实现。
+    pub kind: ActionKind,
+}
+
+/// 已解析行为。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Behavior {
+    /// 行为名称。
+    pub name: String,
+    /// 选择权重。
+    pub frequency: f64,
+    /// 可选条件表达式。
+    pub condition: Option<String>,
+    /// 行为根动作。
+    pub action: Action,
+}
+
+/// XML 解析错误。
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum ModelError {
+    /// XML 语法错误。
+    #[error("invalid engine XML: {0}")]
+    Xml(String),
+    /// 缺少必要字段。
+    #[error("engine XML is missing {0}")]
+    Missing(String),
+    /// 属性数值无效。
+    #[error("invalid engine attribute {0}")]
+    Attribute(String),
+}
+
+/// actions.xml 与 behaviors.xml 的纯 Rust 解析结果。
+#[derive(Clone, Debug, Default)]
+pub struct EngineModel {
+    actions: BTreeMap<String, Action>,
+    behaviors: Vec<Behavior>,
+}
+
+impl EngineModel {
+    /// 解析两个 Shijima 风格 XML 文档。
+    pub fn from_xml(actions_xml: &str, behaviors_xml: &str) -> Result<Self, ModelError> {
+        let actions_doc = roxmltree::Document::parse(actions_xml)
+            .map_err(|error| ModelError::Xml(error.to_string()))?;
+        let behaviors_doc = roxmltree::Document::parse(behaviors_xml)
+            .map_err(|error| ModelError::Xml(error.to_string()))?;
+        let mut actions = BTreeMap::new();
+        let root = actions_doc.root_element();
+        for node in root.children().filter(|node| {
+            node.is_element() && node.tag_name().name().eq_ignore_ascii_case("action")
+        }) {
+            let action = parse_action(node)?;
+            let name = action
+                .name
+                .clone()
+                .ok_or_else(|| ModelError::Missing("action name".into()))?;
+            actions.insert(name, action);
+        }
+        let mut behaviors = Vec::new();
+        for node in behaviors_doc.root_element().children().filter(|node| {
+            node.is_element() && node.tag_name().name().eq_ignore_ascii_case("behavior")
+        }) {
+            let name = attribute(node, "name")
+                .ok_or_else(|| ModelError::Missing("behavior name".into()))?;
+            let frequency = attribute(node, "frequency")
+                .unwrap_or("1")
+                .parse()
+                .map_err(|_| ModelError::Attribute("frequency".into()))?;
+            let condition = attribute(node, "condition").map(str::to_owned);
+            let action_node = node
+                .children()
+                .find(|child| {
+                    child.is_element() && child.tag_name().name().eq_ignore_ascii_case("action")
+                })
+                .ok_or_else(|| ModelError::Missing("behavior action".into()))?;
+            behaviors.push(Behavior {
+                name: name.to_owned(),
+                frequency,
+                condition,
+                action: parse_action(action_node)?,
+            });
+        }
+        Ok(Self { actions, behaviors })
+    }
+
+    /// 返回行为列表。
+    pub fn behaviors(&self) -> &[Behavior] {
+        &self.behaviors
+    }
+
+    /// 按名称查找动作。
+    pub fn action(&self, name: &str) -> Option<&Action> {
+        self.actions.get(name)
+    }
+}
+
+fn attribute<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Option<&'a str> {
+    node.attributes()
+        .find(|attribute| attribute.name().eq_ignore_ascii_case(name))
+        .map(|attribute| attribute.value())
+}
+
+fn parse_action<'a, 'input>(node: Node<'a, 'input>) -> Result<Action, ModelError> {
+    let name = attribute(node, "name").map(str::to_owned);
+    let typ = attribute(node, "type").map(|value| value.to_ascii_lowercase());
+    let children = node
+        .children()
+        .filter(|child| {
+            child.is_element() && child.tag_name().name().eq_ignore_ascii_case("action")
+        })
+        .collect::<Vec<_>>();
+    let kind = match typ.as_deref() {
+        Some("offset") => ActionKind::Offset {
+            dx: parse_attr(node, "dx")?,
+            dy: parse_attr(node, "dy")?,
+        },
+        Some("move") | Some("movewithturn") => ActionKind::Move {
+            dx: parse_attr(node, "dx")?,
+            dy: parse_attr(node, "dy")?,
+        },
+        Some("stay") => ActionKind::Stay {
+            duration: parse_attr::<u64>(node, "duration")?,
+        },
+        Some("selfdestruct") | Some("self_destruct") => ActionKind::SelfDestruct,
+        Some("instant") => ActionKind::Instant,
+        Some("sequence") => ActionKind::Sequence(
+            children
+                .iter()
+                .map(|child| parse_action(*child))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        None if !children.is_empty() => ActionKind::Sequence(
+            children
+                .iter()
+                .map(|child| parse_action(*child))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        None => ActionKind::Reference(
+            name.clone()
+                .ok_or_else(|| ModelError::Missing("action type or name".into()))?,
+        ),
+        Some(other) => return Err(ModelError::Attribute(format!("type={other}"))),
+    };
+    Ok(Action { name, kind })
+}
+
+fn parse_attr<T: std::str::FromStr>(node: Node<'_, '_>, name: &str) -> Result<T, ModelError> {
+    attribute(node, name)
+        .ok_or_else(|| ModelError::Missing(name.into()))?
+        .parse()
+        .map_err(|_| ModelError::Attribute(name.into()))
+}
+
+/// 运行时的单个 mascot 状态。
+#[derive(Clone, Debug)]
+pub struct EngineMascot {
+    id: u64,
+    behavior: String,
+    x: f64,
+    y: f64,
+    dead: bool,
+    variables: BTreeMap<String, Value>,
+    running: Option<RunningAction>,
+}
+
+impl EngineMascot {
+    /// 返回运行时 ID。
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// 返回当前行为。
+    pub fn behavior(&self) -> &str {
+        &self.behavior
+    }
+    /// 返回锚点位置。
+    pub fn position(&self) -> (f64, f64) {
+        (self.x, self.y)
+    }
+    /// 判断是否已标记自毁。
+    pub fn is_dead(&self) -> bool {
+        self.dead
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RunningAction {
+    action: Action,
+    child_index: usize,
+    remaining: Option<u64>,
+}
+
+/// 纯 Rust 行为/动作运行时。
+#[derive(Clone, Debug)]
+pub struct EngineRuntime {
+    model: EngineModel,
+    mascots: Vec<EngineMascot>,
+    next_id: u64,
+}
+
+impl EngineRuntime {
+    /// 创建空运行时。
+    pub fn new(model: EngineModel) -> Self {
         Self {
-            context: EvalContext::default(),
+            model,
+            mascots: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// 创建指定行为的 mascot。
+    pub fn spawn(
+        &mut self,
+        behavior: impl Into<String>,
+        x: f64,
+        y: f64,
+    ) -> Result<u64, ModelError> {
+        let behavior = behavior.into();
+        if !self
+            .model
+            .behaviors
+            .iter()
+            .any(|item| item.name == behavior)
+        {
+            return Err(ModelError::Missing(format!("behavior {behavior}")));
+        }
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| ModelError::Attribute("mascot id".into()))?;
+        self.mascots.push(EngineMascot {
+            id,
+            behavior,
+            x,
+            y,
+            dead: false,
+            variables: BTreeMap::new(),
+            running: None,
+        });
+        Ok(id)
+    }
+
+    /// 设置 mascot 脚本变量。
+    pub fn set_variable(
+        &mut self,
+        id: u64,
+        name: impl Into<String>,
+        value: Value,
+    ) -> Result<(), ModelError> {
+        let mascot = self
+            .mascots
+            .iter_mut()
+            .find(|mascot| mascot.id == id)
+            .ok_or_else(|| ModelError::Missing(format!("mascot {id}")))?;
+        mascot.variables.insert(name.into(), value);
+        Ok(())
+    }
+
+    /// 执行指定数量的 subtick。
+    pub fn tick(&mut self, subticks: u32) {
+        for _ in 0..subticks {
+            let model = self.model.clone();
+            for mascot in &mut self.mascots {
+                if mascot.dead {
+                    continue;
+                }
+                let behavior = model
+                    .behaviors
+                    .iter()
+                    .find(|behavior| behavior.name == mascot.behavior);
+                let Some(behavior) = behavior else { continue };
+                if mascot.running.is_none() {
+                    if let Some(condition) = behavior.condition.as_deref() {
+                        let mut engine = Engine::new();
+                        for (name, value) in &mascot.variables {
+                            engine
+                                .context_mut()
+                                .set_variable(name.clone(), value.clone());
+                        }
+                        if !matches!(engine.evaluate_source(condition), Ok(Value::Bool(true))) {
+                            continue;
+                        }
+                    }
+                    mascot.running = Some(RunningAction {
+                        action: behavior.action.clone(),
+                        child_index: 0,
+                        remaining: None,
+                    });
+                }
+                let mut running = mascot.running.take().expect("running action initialized");
+                let done = execute_running(&model, &mut running, mascot);
+                if !done {
+                    mascot.running = Some(running);
+                }
+            }
+        }
+    }
+
+    /// 返回所有 mascot 状态。
+    pub fn mascots(&self) -> &[EngineMascot] {
+        &self.mascots
+    }
+}
+
+fn execute_running(
+    model: &EngineModel,
+    running: &mut RunningAction,
+    mascot: &mut EngineMascot,
+) -> bool {
+    loop {
+        match &running.action.kind {
+            ActionKind::Sequence(children) => {
+                if running.child_index >= children.len() {
+                    return true;
+                }
+                let child = children[running.child_index].clone();
+                let mut child_running = RunningAction {
+                    action: child,
+                    child_index: 0,
+                    remaining: None,
+                };
+                if execute_running(model, &mut child_running, mascot) {
+                    running.child_index += 1;
+                    continue;
+                }
+                return false;
+            }
+            ActionKind::Reference(name) => {
+                let Some(action) = model.action(name).cloned() else {
+                    return true;
+                };
+                running.action = action;
+            }
+            ActionKind::Offset { dx, dy } => {
+                mascot.x += dx;
+                mascot.y += dy;
+                return true;
+            }
+            ActionKind::Move { dx, dy } => {
+                mascot.x += dx;
+                mascot.y += dy;
+                return true;
+            }
+            ActionKind::Stay { duration } => {
+                let remaining = running.remaining.get_or_insert(*duration);
+                if *remaining == 0 {
+                    return true;
+                }
+                *remaining -= 1;
+                return *remaining == 0;
+            }
+            ActionKind::SelfDestruct => {
+                mascot.dead = true;
+                return true;
+            }
+            ActionKind::Instant => return true,
         }
     }
 }
@@ -367,19 +745,18 @@ impl Expr {
                 if let Self::Identifier(name) = callee.as_ref() {
                     return context.call_function(name, &values);
                 }
-                if let Self::Member { object, property } = callee.as_ref() {
-                    if matches!(object.as_ref(), Self::Identifier(name) if name == "Math")
-                        && property == "random"
-                    {
-                        if !values.is_empty() {
-                            return Err(EvalError::InvalidCall {
-                                name: "Math.random".to_owned(),
-                                expected: 0,
-                                actual: values.len(),
-                            });
-                        }
-                        return Ok(Value::Number(context.random()));
+                if let Self::Member { object, property } = callee.as_ref()
+                    && matches!(object.as_ref(), Self::Identifier(name) if name == "Math")
+                    && property == "random"
+                {
+                    if !values.is_empty() {
+                        return Err(EvalError::InvalidCall {
+                            name: "Math.random".to_owned(),
+                            expected: 0,
+                            actual: values.len(),
+                        });
                     }
+                    return Ok(Value::Number(context.random()));
                 }
                 let value = callee.evaluate(context)?;
                 Err(EvalError::NotCallable(value.type_name()))
