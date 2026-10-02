@@ -32,13 +32,29 @@ impl Default for MascotMetadata {
 pub enum MetadataError {
     #[error("invalid info.json: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("info.json must contain a JSON object")]
+    NotObject,
     #[error("info.json must contain a non-empty name")]
     EmptyName,
 }
 
 /// 解析 `info.json`，只接受 JSON object 和非空 name。
 pub fn metadata_from_json(bytes: &[u8]) -> Result<MascotMetadata, MetadataError> {
-    let metadata: MascotMetadata = serde_json::from_slice(bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let object = value.as_object().ok_or(MetadataError::NotObject)?;
+    let field = |name: &str| {
+        object
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let metadata = MascotMetadata {
+        name: field("name"),
+        version: field("version"),
+        description: field("description"),
+        author: field("author"),
+    };
     if metadata.name.trim().is_empty() {
         return Err(MetadataError::EmptyName);
     }
@@ -141,6 +157,12 @@ mod tests {
         assert!(metadata_from_json(br#"{"version":"1"}"#).is_err());
         assert!(metadata_from_json(br#"{"name":"  "}"#).is_err());
         assert!(metadata_from_json(br#"[]"#).is_err());
+    }
+
+    #[test]
+    fn treats_non_string_optional_fields_as_empty() {
+        let metadata = metadata_from_json(br#"{"name":"Fox","version":3}"#).unwrap();
+        assert_eq!(metadata.version, "");
     }
 
     #[test]
