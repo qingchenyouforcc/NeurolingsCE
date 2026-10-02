@@ -3099,9 +3099,11 @@ version = "0.1.0"
 dependencies = [
  "api",
  "assets",
+ "engine",
  "runtime",
  "serde_json",
  "store",
+ "zip",
 ]
 
 [[package]]

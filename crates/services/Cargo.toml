@@ -8,6 +8,10 @@ publish.workspace = true
 [dependencies]
 assets.workspace = true
 api.workspace = true
+engine.workspace = true
 runtime.workspace = true
 serde_json.workspace = true
 store.workspace = true
+
+[dev-dependencies]
+zip = "2.4"

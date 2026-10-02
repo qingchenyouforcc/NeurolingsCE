@@ -1,8 +1,12 @@
 //! API 命令到运行时的线程内业务适配层。
 
-use api::{Anchor, ApiError, ApiRequest, CliLabel, Command, LoadedMascotInfo, MascotInfo};
+use api::{
+    Anchor, ApiError, ApiRequest, CliLabel, Command, LoadedMascotInfo, MascotInfo, Selector,
+};
+use engine::{EvalContext, Expression, Value as EngineValue};
 use runtime::{Runtime, RuntimeError, SpawnRequest};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use store::StoreInstaller;
 
@@ -92,15 +96,13 @@ impl CommandService {
                 Ok(json!({ "ok": true, "app": APP_NAME, "api_version": api::API_VERSION }))
             }
             Command::ListMascots => {
-                let selector = request
-                    .field("selector")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let selector = selector_from_request(&request)?;
+                let matcher = SelectorMatcher::new(&selector);
                 let mascots = self
                     .runtime
                     .list()
                     .into_iter()
-                    .filter(|mascot| selector.is_empty() || mascot.name() == selector)
+                    .filter(|mascot| matcher.matches(mascot))
                     .map(to_info)
                     .collect::<Vec<_>>();
                 Ok(json!({ "mascots": mascots }))
@@ -110,15 +112,19 @@ impl CommandService {
             Command::AlterMascot => self.alter(request),
             Command::DismissMascot => self.dismiss(request),
             Command::DismissAllMascots => {
-                let selector = request
-                    .field("selector")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let count = if selector.is_empty() {
-                    self.runtime.dismiss_all()
-                } else {
-                    self.runtime.dismiss_all_named(selector)
-                };
+                let selector = selector_from_request(&request)?;
+                let matcher = SelectorMatcher::new(&selector);
+                let ids = self
+                    .runtime
+                    .list()
+                    .into_iter()
+                    .filter(|mascot| matcher.matches(mascot))
+                    .map(|mascot| mascot.id())
+                    .collect::<Vec<_>>();
+                let count = ids
+                    .into_iter()
+                    .filter(|id| self.runtime.dismiss(*id).is_ok())
+                    .count();
                 Ok(json!({ "dismissed": count }))
             }
             Command::RegisterCliLabel => self.register_label(request),
@@ -307,6 +313,73 @@ fn field_i32(request: &ApiRequest, name: &str) -> Result<i32, ApiError> {
         .ok_or_else(|| ApiError::bad_request(format!("{name} must be an integer")))
 }
 
+fn selector_from_request(request: &ApiRequest) -> Result<String, ApiError> {
+    let selector = request
+        .field("selector")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    Selector::try_from(selector).map(Selector::into_inner)
+}
+
+struct SelectorMatcher {
+    raw: String,
+    expression: Option<Expression>,
+}
+
+impl SelectorMatcher {
+    fn new(raw: &str) -> Self {
+        Self {
+            raw: raw.to_owned(),
+            expression: (!raw.trim().is_empty())
+                .then(|| Expression::parse(raw).ok())
+                .flatten(),
+        }
+    }
+
+    fn matches(&self, mascot: &runtime::MascotSession) -> bool {
+        if self.raw.trim().is_empty() || self.raw == mascot.name() {
+            return true;
+        }
+        let Some(expression) = &self.expression else {
+            return false;
+        };
+        let mut context = EvalContext::default();
+        let mut object = BTreeMap::new();
+        object.insert("id".to_owned(), EngineValue::Number(f64::from(mascot.id())));
+        object.insert(
+            "dataId".to_owned(),
+            EngineValue::Number(f64::from(mascot.data_id())),
+        );
+        object.insert(
+            "name".to_owned(),
+            EngineValue::String(mascot.name().to_owned()),
+        );
+        object.insert(
+            "label".to_owned(),
+            mascot.label().map_or(EngineValue::Null, |label| {
+                EngineValue::Number(label.value() as f64)
+            }),
+        );
+        object.insert(
+            "activeBehavior".to_owned(),
+            mascot.active_behavior().map_or(EngineValue::Null, |value| {
+                EngineValue::String(value.to_owned())
+            }),
+        );
+        context.set_variable("mascot", EngineValue::Object(object.clone()));
+        for (name, value) in object {
+            context.set_variable(name, value);
+        }
+        match expression.evaluate(&mut context) {
+            Ok(EngineValue::Bool(value)) => value,
+            Ok(EngineValue::Number(value)) => value != 0.0 && !value.is_nan(),
+            Ok(EngineValue::String(value)) => !value.is_empty(),
+            Ok(EngineValue::Object(_)) => true,
+            Ok(EngineValue::Null) | Err(_) => false,
+        }
+    }
+}
+
 fn map_runtime_error(error: RuntimeError) -> ApiError {
     match error {
         RuntimeError::MascotNotFound(_) => {
@@ -321,6 +394,8 @@ fn map_runtime_error(error: RuntimeError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::CommandService;
     use api::{ApiRequest, Command};
     use serde_json::json;
@@ -373,5 +448,107 @@ mod tests {
                 .execute(ApiRequest::new(Command::SpawnMascot).with_field("name", json!("A")))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn selector_expressions_filter_by_public_mascot_fields() {
+        let mut service = CommandService::new();
+        service
+            .execute(
+                ApiRequest::new(Command::SpawnMascot)
+                    .with_field("name", json!("Alpha"))
+                    .with_field("label", json!(3))
+                    .with_field("behavior", json!("Walk")),
+            )
+            .unwrap();
+        service
+            .execute(
+                ApiRequest::new(Command::SpawnMascot)
+                    .with_field("name", json!("Beta"))
+                    .with_field("label", json!(4))
+                    .with_field("behavior", json!("Idle")),
+            )
+            .unwrap();
+
+        let by_name = service
+            .execute(
+                ApiRequest::new(Command::ListMascots)
+                    .with_field("selector", json!("name == 'Alpha'")),
+            )
+            .unwrap();
+        assert_eq!(by_name["mascots"].as_array().unwrap().len(), 1);
+        assert_eq!(by_name["mascots"][0]["name"], "Alpha");
+
+        let by_label = service
+            .execute(
+                ApiRequest::new(Command::ListMascots)
+                    .with_field("selector", json!("mascot.label == 4")),
+            )
+            .unwrap();
+        assert_eq!(by_label["mascots"].as_array().unwrap().len(), 1);
+        assert_eq!(by_label["mascots"][0]["name"], "Beta");
+
+        let dismissed = service
+            .execute(
+                ApiRequest::new(Command::DismissAllMascots)
+                    .with_field("selector", json!("activeBehavior == 'Walk'")),
+            )
+            .unwrap();
+        assert_eq!(dismissed["dismissed"], 1);
+    }
+
+    #[test]
+    fn import_and_remove_template_updates_loaded_catalog() {
+        let root =
+            std::env::temp_dir().join(format!("neurolingsce-services-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let package_path = root.join("fox.zip");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file("info.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(
+            &mut archive,
+            br#"{"name":"Fox","version":"1.0","description":"A fox","author":"Test"}"#,
+        )
+        .unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        std::fs::write(&package_path, bytes).unwrap();
+
+        let mut service = CommandService::with_storage(root.join("mascots"), root.join("cache"));
+        let imported = service
+            .execute(
+                ApiRequest::new(Command::ImportMascotTemplate)
+                    .with_field("path", json!(package_path.to_string_lossy())),
+            )
+            .unwrap();
+        assert_eq!(imported["loaded_mascot"]["name"], "Fox");
+        assert_eq!(
+            service
+                .execute(ApiRequest::new(Command::ListLoadedMascots))
+                .unwrap()["loaded_mascots"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let removed = service
+            .execute(
+                ApiRequest::new(Command::RemoveMascotTemplate).with_field("name", json!("Fox")),
+            )
+            .unwrap();
+        assert_eq!(removed["removed"], true);
+        assert_eq!(
+            service
+                .execute(ApiRequest::new(Command::ListLoadedMascots))
+                .unwrap()["loaded_mascots"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
