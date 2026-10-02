@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::Path;
@@ -7,7 +8,16 @@ use crate::{SafePathError, SecurityLimits, safe_child_path, validate_relative_pa
 /// 当前支持的归档格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveFormat {
+    /// ZIP 容器。
     Zip,
+    /// 未压缩 TAR 容器。
+    Tar,
+    /// GZIP 压缩的 TAR 容器。
+    Gzip,
+    /// 7z 容器；当前仅做格式识别，解包后端待补充。
+    SevenZip,
+    /// RAR 容器；当前仅做格式识别，解包后端待补充。
+    Rar,
 }
 
 /// 根据文件头识别 mascot 包归档格式。
@@ -15,15 +25,33 @@ pub fn detect_archive_format(bytes: &[u8]) -> Option<ArchiveFormat> {
     let is_zip = bytes.starts_with(b"PK\x03\x04")
         || bytes.starts_with(b"PK\x05\x06")
         || bytes.starts_with(b"PK\x07\x08");
-    is_zip.then_some(ArchiveFormat::Zip)
+    if is_zip {
+        return Some(ArchiveFormat::Zip);
+    }
+    if bytes.starts_with(b"\x1f\x8b") {
+        return Some(ArchiveFormat::Gzip);
+    }
+    if bytes.starts_with(b"7z\xbc\xaf\x27\x1c") {
+        return Some(ArchiveFormat::SevenZip);
+    }
+    if bytes.starts_with(b"Rar!\x1a\x07") {
+        return Some(ArchiveFormat::Rar);
+    }
+    if bytes.len() >= 262 && &bytes[257..262] == b"ustar" {
+        return Some(ArchiveFormat::Tar);
+    }
+    None
 }
 
 /// 根据文件头创建受限的归档读取器。
-pub fn open_archive(bytes: &[u8]) -> Result<ZipArchiveReader<Cursor<Vec<u8>>>, ArchiveError> {
-    if detect_archive_format(bytes).is_none() {
-        return Err(ArchiveError::Unsupported);
+pub fn open_archive(bytes: &[u8]) -> Result<Box<dyn ArchiveReader>, ArchiveError> {
+    match detect_archive_format(bytes) {
+        Some(ArchiveFormat::Zip) => Ok(Box::new(ZipArchiveReader::from_bytes(bytes)?)),
+        Some(ArchiveFormat::Tar) => Ok(Box::new(TarArchiveReader::from_bytes(bytes)?)),
+        Some(ArchiveFormat::Gzip) => Ok(Box::new(TarArchiveReader::from_gzip(bytes)?)),
+        Some(ArchiveFormat::SevenZip | ArchiveFormat::Rar) => Err(ArchiveError::Unsupported),
+        None => Err(ArchiveError::Unsupported),
     }
-    ZipArchiveReader::from_bytes(bytes)
 }
 
 /// 归档读取器返回的单个条目描述。
@@ -138,6 +166,106 @@ impl<R: Read + Seek> ArchiveReader for ZipArchiveReader<R> {
             return Ok(bytes);
         }
         Err(ArchiveError::NotFound(path.to_owned()))
+    }
+}
+
+/// 纯 Rust TAR/GZIP 后端；条目在构造时读入受限内存，避免保留外部文件句柄。
+pub struct TarArchiveReader {
+    entries: BTreeMap<String, (bool, Vec<u8>)>,
+    limits: ArchiveValidationLimits,
+}
+
+impl TarArchiveReader {
+    /// 从未压缩 TAR 字节读取。
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ArchiveError> {
+        if bytes.len() as u64 > SecurityLimits::MASCOT_PACKAGE_MAX_BYTES {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        Self::from_reader(Cursor::new(bytes.to_vec()))
+    }
+
+    /// 从 GZIP 压缩的 TAR 字节读取。
+    pub fn from_gzip(bytes: &[u8]) -> Result<Self, ArchiveError> {
+        if bytes.len() as u64 > SecurityLimits::MASCOT_PACKAGE_MAX_BYTES {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        let mut decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
+        let mut tar_bytes = Vec::new();
+        decoder.read_to_end(&mut tar_bytes)?;
+        Self::from_bytes(&tar_bytes)
+    }
+
+    fn from_reader<R: Read>(reader: R) -> Result<Self, ArchiveError> {
+        let limits = ArchiveValidationLimits::default();
+        let mut archive = tar::Archive::new(reader);
+        let mut entries = BTreeMap::new();
+        let mut total = 0u64;
+        let mut count = 0usize;
+        for item in archive
+            .entries()
+            .map_err(|error| ArchiveError::Backend(error.to_string()))?
+        {
+            let mut item = item.map_err(|error| ArchiveError::Backend(error.to_string()))?;
+            count += 1;
+            if count > limits.max_entries {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            let raw_path = item
+                .path()
+                .map_err(|error| ArchiveError::Backend(error.to_string()))?
+                .to_string_lossy()
+                .into_owned();
+            let path = validate_relative_path(&raw_path)
+                .map_err(|_| ArchiveError::UnsafePath(raw_path.clone()))?;
+            let is_directory = item.header().entry_type().is_dir();
+            if is_directory {
+                entries.insert(path, (true, Vec::new()));
+                continue;
+            }
+            let declared = item.header().size().map_err(ArchiveError::Io)?;
+            if declared > limits.max_single_file_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            let mut data = Vec::with_capacity(declared as usize);
+            item.read_to_end(&mut data)?;
+            total = total
+                .checked_add(data.len() as u64)
+                .ok_or(ArchiveError::LimitExceeded)?;
+            if total > limits.max_total_uncompressed_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            entries.insert(path, (false, data));
+        }
+        Ok(Self { entries, limits })
+    }
+}
+
+impl ArchiveReader for TarArchiveReader {
+    fn entries(&mut self) -> Result<Vec<ArchiveEntry>, ArchiveError> {
+        let entries = self
+            .entries
+            .iter()
+            .map(|(path, (is_directory, data))| ArchiveEntry {
+                path: path.clone(),
+                is_directory: *is_directory,
+                compressed_size: None,
+                uncompressed_size: data.len() as u64,
+            })
+            .collect::<Vec<_>>();
+        validate_archive_entries(&entries, self.limits).map_err(ArchiveError::from)?;
+        Ok(entries)
+    }
+
+    fn read_entry(&mut self, path: &str) -> Result<Vec<u8>, ArchiveError> {
+        let path =
+            validate_relative_path(path).map_err(|_| ArchiveError::UnsafePath(path.to_owned()))?;
+        let Some((is_directory, data)) = self.entries.get(&path) else {
+            return Err(ArchiveError::NotFound(path));
+        };
+        if *is_directory {
+            return Err(ArchiveError::NotFound(path));
+        }
+        Ok(data.clone())
     }
 }
 
@@ -288,6 +416,16 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
+    fn tar_bytes() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_path("info.json").unwrap();
+        header.set_size(14);
+        header.set_cksum();
+        builder.append(&header, &br#"{"name":"Fox"}"#[..]).unwrap();
+        builder.into_inner().unwrap()
+    }
+
     fn entry(path: &str, size: u64) -> ArchiveEntry {
         ArchiveEntry {
             path: path.to_owned(),
@@ -327,6 +465,17 @@ mod tests {
         let mut reader = open_archive(&bytes).unwrap();
         let entries = reader.entries().unwrap();
         assert_eq!(entries.len(), 3);
+        assert_eq!(
+            reader.read_entry("info.json").unwrap(),
+            br#"{"name":"Fox"}"#
+        );
+    }
+
+    #[test]
+    fn detects_and_reads_tar_package() {
+        let bytes = tar_bytes();
+        assert_eq!(detect_archive_format(&bytes), Some(ArchiveFormat::Tar));
+        let mut reader = open_archive(&bytes).unwrap();
         assert_eq!(
             reader.read_entry("info.json").unwrap(),
             br#"{"name":"Fox"}"#
