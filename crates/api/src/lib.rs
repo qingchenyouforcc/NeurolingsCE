@@ -50,7 +50,11 @@ impl ApiError {
 
     /// 创建无效 anchor 错误。
     pub fn invalid_anchor() -> Self {
-        Self::new(400, Some("invalid_anchor".into()), "Anchor coordinates must be finite")
+        Self::new(
+            400,
+            Some("invalid_anchor".into()),
+            "Anchor coordinates must be finite",
+        )
     }
 
     /// 创建无效 label 错误。
@@ -493,4 +497,3 @@ pub type PingInfo = ApiPingInfo;
 
 /// 兼容旧命名的命令状态别名。
 pub type MascotCommandStatus = ApiError;
-

@@ -65,13 +65,22 @@ fn selector_round_trips_unicode_by_character_count() {
     let selector = Selector::try_from("名称 == '桌宠'").unwrap();
 
     assert_eq!(selector.as_str(), "名称 == '桌宠'");
-    assert_eq!(serde_json::to_string(&selector).unwrap(), r#""名称 == '桌宠'""#);
+    assert_eq!(
+        serde_json::to_string(&selector).unwrap(),
+        r#""名称 == '桌宠'""#
+    );
 }
 
 #[test]
 fn anchor_rejects_non_finite_coordinates() {
-    assert_eq!(Anchor::new(f64::NAN, 0.0).unwrap_err(), ApiError::invalid_anchor());
-    assert_eq!(Anchor::new(0.0, f64::INFINITY).unwrap_err(), ApiError::invalid_anchor());
+    assert_eq!(
+        Anchor::new(f64::NAN, 0.0).unwrap_err(),
+        ApiError::invalid_anchor()
+    );
+    assert_eq!(
+        Anchor::new(0.0, f64::INFINITY).unwrap_err(),
+        ApiError::invalid_anchor()
+    );
 }
 
 #[test]
@@ -80,7 +89,10 @@ fn label_is_non_negative_and_serializes_as_number() {
 
     assert_eq!(label.value(), 3);
     assert_eq!(serde_json::to_value(label).unwrap(), json!(3));
-    assert_eq!(CliLabel::try_from(-1_i64).unwrap_err(), ApiError::invalid_label());
+    assert_eq!(
+        CliLabel::try_from(-1_i64).unwrap_err(),
+        ApiError::invalid_label()
+    );
 }
 
 #[test]
@@ -104,4 +116,3 @@ fn api_error_serialization_omits_missing_code_but_keeps_status() {
         json!({"error": "temporary unavailable", "status": 503})
     );
 }
-
