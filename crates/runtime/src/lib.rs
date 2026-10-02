@@ -588,15 +588,24 @@ mod tests {
         let first = runtime.spawn(SpawnRequest::new("A", 1)).unwrap();
         let second = runtime.spawn(SpawnRequest::new("B", 2)).unwrap();
 
-        assert_eq!(runtime.register_label(first.id(), None).unwrap(), Label::new(0));
-        assert_eq!(runtime.register_label(first.id(), None).unwrap(), Label::new(0));
+        assert_eq!(
+            runtime.register_label(first.id(), None).unwrap(),
+            Label::new(0)
+        );
+        assert_eq!(
+            runtime.register_label(first.id(), None).unwrap(),
+            Label::new(0)
+        );
         assert_eq!(
             runtime.register_label(second.id(), Some(Label::new(0))),
             Err(RuntimeError::LabelInUse(Label::new(0)))
         );
         runtime.clear_label(first.id()).unwrap();
         assert_eq!(runtime.label_for(first.id()).unwrap(), None);
-        assert_eq!(runtime.register_label(second.id(), None).unwrap(), Label::new(1));
+        assert_eq!(
+            runtime.register_label(second.id(), None).unwrap(),
+            Label::new(1)
+        );
     }
 
     #[test]
