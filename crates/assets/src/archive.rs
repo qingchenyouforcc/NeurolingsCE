@@ -49,7 +49,8 @@ pub fn open_archive(bytes: &[u8]) -> Result<Box<dyn ArchiveReader>, ArchiveError
         Some(ArchiveFormat::Zip) => Ok(Box::new(ZipArchiveReader::from_bytes(bytes)?)),
         Some(ArchiveFormat::Tar) => Ok(Box::new(TarArchiveReader::from_bytes(bytes)?)),
         Some(ArchiveFormat::Gzip) => Ok(Box::new(TarArchiveReader::from_gzip(bytes)?)),
-        Some(ArchiveFormat::SevenZip | ArchiveFormat::Rar) => Err(ArchiveError::Unsupported),
+        Some(ArchiveFormat::SevenZip) => Ok(Box::new(SevenZipArchiveReader::from_bytes(bytes)?)),
+        Some(ArchiveFormat::Rar) => Ok(Box::new(RarArchiveReader::from_bytes(bytes)?)),
         None => Err(ArchiveError::Unsupported),
     }
 }
@@ -269,6 +270,153 @@ impl ArchiveReader for TarArchiveReader {
     }
 }
 
+/// 纯 Rust 7z 后端；条目在受限内存中建立索引，读取时由 sevenz-rust2 解码。
+pub struct SevenZipArchiveReader {
+    entries: BTreeMap<String, (bool, Vec<u8>)>,
+    limits: ArchiveValidationLimits,
+}
+
+impl SevenZipArchiveReader {
+    /// 从内存字节读取 7z 包。
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ArchiveError> {
+        if bytes.len() as u64 > SecurityLimits::MASCOT_PACKAGE_MAX_BYTES {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        let mut reader = sevenz_rust2::ArchiveReader::new(
+            Cursor::new(bytes.to_vec()),
+            sevenz_rust2::Password::empty(),
+        )
+        .map_err(|error| ArchiveError::Backend(error.to_string()))?;
+        let limits = ArchiveValidationLimits::default();
+        let files = reader.archive().files.clone();
+        if files.len() > limits.max_entries {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        let mut entries = BTreeMap::new();
+        let mut total = 0u64;
+        for file in files {
+            let path = validate_relative_path(file.name())
+                .map_err(|_| ArchiveError::UnsafePath(file.name().to_owned()))?;
+            if file.is_directory() {
+                entries.insert(path, (true, Vec::new()));
+                continue;
+            }
+            if file.size() > limits.max_single_file_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            let data = reader
+                .read_file(file.name())
+                .map_err(|error| ArchiveError::Backend(error.to_string()))?;
+            total = total
+                .checked_add(data.len() as u64)
+                .ok_or(ArchiveError::LimitExceeded)?;
+            if total > limits.max_total_uncompressed_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            entries.insert(path, (false, data));
+        }
+        Ok(Self { entries, limits })
+    }
+}
+
+impl ArchiveReader for SevenZipArchiveReader {
+    fn entries(&mut self) -> Result<Vec<ArchiveEntry>, ArchiveError> {
+        map_entries(&self.entries, self.limits)
+    }
+    fn read_entry(&mut self, path: &str) -> Result<Vec<u8>, ArchiveError> {
+        map_read_entry(&self.entries, path)
+    }
+}
+
+/// 纯 Rust RAR 后端；支持 RAR 1.3、1.5-4 和 5/7 家族。
+pub struct RarArchiveReader {
+    entries: BTreeMap<String, (bool, Vec<u8>)>,
+    limits: ArchiveValidationLimits,
+}
+
+impl RarArchiveReader {
+    /// 从内存字节读取 RAR 包。
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ArchiveError> {
+        if bytes.len() as u64 > SecurityLimits::MASCOT_PACKAGE_MAX_BYTES {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        let archive = rars::ArchiveReader::read_owned(bytes.to_vec())
+            .map_err(|error| ArchiveError::Backend(error.to_string()))?;
+        let limits = ArchiveValidationLimits::default();
+        let members = archive.members().collect::<Vec<_>>();
+        if members.len() > limits.max_entries {
+            return Err(ArchiveError::LimitExceeded);
+        }
+        let mut entries = BTreeMap::new();
+        let mut total = 0u64;
+        for member in members {
+            let name = member.meta.name_lossy();
+            let path = validate_relative_path(&name)
+                .map_err(|_| ArchiveError::UnsafePath(name.clone()))?;
+            if member.meta.is_directory {
+                entries.insert(path, (true, Vec::new()));
+                continue;
+            }
+            if member.meta.unpacked_size > limits.max_single_file_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            let data = archive
+                .read_member(member.meta.name_bytes(), None)
+                .map_err(|error| ArchiveError::Backend(error.to_string()))?
+                .ok_or_else(|| ArchiveError::NotFound(name.clone()))?;
+            total = total
+                .checked_add(data.len() as u64)
+                .ok_or(ArchiveError::LimitExceeded)?;
+            if total > limits.max_total_uncompressed_bytes {
+                return Err(ArchiveError::LimitExceeded);
+            }
+            entries.insert(path, (false, data));
+        }
+        Ok(Self { entries, limits })
+    }
+}
+
+impl ArchiveReader for RarArchiveReader {
+    fn entries(&mut self) -> Result<Vec<ArchiveEntry>, ArchiveError> {
+        map_entries(&self.entries, self.limits)
+    }
+    fn read_entry(&mut self, path: &str) -> Result<Vec<u8>, ArchiveError> {
+        map_read_entry(&self.entries, path)
+    }
+}
+
+fn map_entries(
+    entries: &BTreeMap<String, (bool, Vec<u8>)>,
+    limits: ArchiveValidationLimits,
+) -> Result<Vec<ArchiveEntry>, ArchiveError> {
+    let entries = entries
+        .iter()
+        .map(|(path, (is_directory, data))| ArchiveEntry {
+            path: path.clone(),
+            is_directory: *is_directory,
+            compressed_size: None,
+            uncompressed_size: data.len() as u64,
+        })
+        .collect::<Vec<_>>();
+    validate_archive_entries(&entries, limits).map_err(ArchiveError::from)?;
+    Ok(entries)
+}
+
+fn map_read_entry(
+    entries: &BTreeMap<String, (bool, Vec<u8>)>,
+    path: &str,
+) -> Result<Vec<u8>, ArchiveError> {
+    let path =
+        validate_relative_path(path).map_err(|_| ArchiveError::UnsafePath(path.to_owned()))?;
+    let Some((is_directory, data)) = entries.get(&path) else {
+        return Err(ArchiveError::NotFound(path));
+    };
+    if *is_directory {
+        return Err(ArchiveError::NotFound(path));
+    }
+    Ok(data.clone())
+}
+
 /// 将归档安全展开到指定目录，并返回校验报告。
 pub fn extract_archive(
     reader: &mut impl ArchiveReader,
@@ -479,6 +627,18 @@ mod tests {
         assert_eq!(
             reader.read_entry("info.json").unwrap(),
             br#"{"name":"Fox"}"#
+        );
+    }
+
+    #[test]
+    fn detects_7z_and_rar_signatures_before_decoding() {
+        assert_eq!(
+            detect_archive_format(b"7z\xbc\xaf\x27\x1c"),
+            Some(ArchiveFormat::SevenZip)
+        );
+        assert_eq!(
+            detect_archive_format(b"Rar!\x1a\x07\x00"),
+            Some(ArchiveFormat::Rar)
         );
     }
 

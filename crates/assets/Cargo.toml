@@ -7,8 +7,10 @@ publish.workspace = true
 
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+rars = "0.9"
 serde.workspace = true
 serde_json.workspace = true
+sevenz-rust2 = "0.23"
 tar = "0.4"
 thiserror.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
