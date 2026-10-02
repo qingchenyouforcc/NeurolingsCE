@@ -362,15 +362,22 @@ impl Runtime {
         if self.labels.contains_key(&label) {
             return Err(RuntimeError::LabelInUse(label));
         }
+        let next_label = if label.value() >= self.next_label {
+            Some(
+                label
+                    .value()
+                    .checked_add(1)
+                    .ok_or(RuntimeError::LabelExhausted)?,
+            )
+        } else {
+            None
+        };
         self.labels.insert(label, mascot_id);
         if let Some(session) = self.sessions.get_mut(&mascot_id) {
             session.label = Some(label);
         }
-        if label.value() >= self.next_label {
-            self.next_label = label
-                .value()
-                .checked_add(1)
-                .ok_or(RuntimeError::LabelExhausted)?;
+        if let Some(next_label) = next_label {
+            self.next_label = next_label;
         }
         Ok(label)
     }
@@ -573,6 +580,23 @@ mod tests {
             runtime.dismiss(third.id()),
             Err(RuntimeError::MascotNotFound(third.id()))
         );
+    }
+
+    #[test]
+    fn register_label_allocates_and_clears_transient_handles() {
+        let mut runtime = Runtime::new();
+        let first = runtime.spawn(SpawnRequest::new("A", 1)).unwrap();
+        let second = runtime.spawn(SpawnRequest::new("B", 2)).unwrap();
+
+        assert_eq!(runtime.register_label(first.id(), None).unwrap(), Label::new(0));
+        assert_eq!(runtime.register_label(first.id(), None).unwrap(), Label::new(0));
+        assert_eq!(
+            runtime.register_label(second.id(), Some(Label::new(0))),
+            Err(RuntimeError::LabelInUse(Label::new(0)))
+        );
+        runtime.clear_label(first.id()).unwrap();
+        assert_eq!(runtime.label_for(first.id()).unwrap(), None);
+        assert_eq!(runtime.register_label(second.id(), None).unwrap(), Label::new(1));
     }
 
     #[test]
