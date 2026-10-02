@@ -3,6 +3,8 @@
 use api::{Anchor, ApiError, ApiRequest, CliLabel, Command, LoadedMascotInfo, MascotInfo};
 use runtime::{Runtime, RuntimeError, SpawnRequest};
 use serde_json::{Value, json};
+use std::path::PathBuf;
+use store::StoreInstaller;
 
 /// 应用名，保持 HTTP 与 CLI 的稳定输出。
 pub const APP_NAME: &str = "NeurolingsCE";
@@ -13,6 +15,7 @@ pub struct CommandService {
     runtime: Runtime,
     loaded: Vec<LoadedMascotInfo>,
     stopped: bool,
+    installer: Option<StoreInstaller>,
 }
 
 impl Default for CommandService {
@@ -24,6 +27,15 @@ impl Default for CommandService {
 impl CommandService {
     /// 创建带默认模板的服务。
     pub fn new() -> Self {
+        let root = std::env::var_os("NEUROLINGSCE_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("NeurolingsCE"));
+        Self::with_storage(root.join("mascots"), root.join("cache"))
+    }
+
+    /// 使用指定目录创建服务，便于桌面配置和隔离测试。
+    pub fn with_storage(storage: impl Into<PathBuf>, cache: impl Into<PathBuf>) -> Self {
+        let installer = StoreInstaller::new(storage, cache).ok();
         Self {
             runtime: Runtime::new(),
             loaded: vec![LoadedMascotInfo {
@@ -34,6 +46,7 @@ impl CommandService {
                 author: "NeurolingsCE".into(),
             }],
             stopped: false,
+            installer,
         }
     }
 
@@ -109,6 +122,8 @@ impl CommandService {
                 Ok(json!({ "dismissed": count }))
             }
             Command::RegisterCliLabel => self.register_label(request),
+            Command::ImportMascotTemplate => self.import_template(request),
+            Command::RemoveMascotTemplate => self.remove_template(request),
             Command::GetCliLabel => {
                 let id = field_i32(&request, "mascot_id")?;
                 let label = self
@@ -126,15 +141,13 @@ impl CommandService {
                 self.stopped = true;
                 Ok(json!({ "stopped": true }))
             }
-            Command::ShowManager
-            | Command::ShowCodexNotification
-            | Command::ImportMascotTemplate
-            | Command::RemoveMascotTemplate
-            | Command::Unknown(_) => Err(ApiError::failure(
-                400,
-                "unsupported_command",
-                "Command is not available in this runtime",
-            )),
+            Command::ShowManager | Command::ShowCodexNotification | Command::Unknown(_) => {
+                Err(ApiError::failure(
+                    400,
+                    "unsupported_command",
+                    "Command is not available in this runtime",
+                ))
+            }
         }
     }
 
@@ -220,6 +233,58 @@ impl CommandService {
             .register_label(id, preferred)
             .map_err(map_runtime_error)?;
         Ok(json!({ "label": label, "mascot_id": id }))
+    }
+
+    fn import_template(&mut self, request: ApiRequest) -> Result<Value, ApiError> {
+        let path = request
+            .field("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::bad_request("path is required"))?;
+        let bytes = std::fs::read(path)
+            .map_err(|error| ApiError::failure(400, "package_read_failed", error.to_string()))?;
+        let installer = self.installer.as_ref().ok_or_else(|| {
+            ApiError::failure(503, "storage_unavailable", "Mascot storage is unavailable")
+        })?;
+        let (metadata, _) = installer
+            .install_bytes(&bytes)
+            .map_err(|error| ApiError::failure(400, "package_invalid", error.to_string()))?;
+        let id = self.loaded.iter().map(|item| item.id).max().unwrap_or(-1) + 1;
+        let info = LoadedMascotInfo {
+            id,
+            name: metadata.name,
+            version: metadata.version,
+            description: metadata.description,
+            author: metadata.author,
+        };
+        self.loaded.push(info.clone());
+        Ok(json!({ "loaded_mascot": info }))
+    }
+
+    fn remove_template(&mut self, request: ApiRequest) -> Result<Value, ApiError> {
+        let name = request
+            .field("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::bad_request("name is required"))?;
+        if name == "Default Mascot" {
+            return Err(ApiError::failure(
+                409,
+                "protected_template",
+                "The default mascot cannot be removed",
+            ));
+        }
+        let Some(index) = self.loaded.iter().position(|item| item.name == name) else {
+            return Err(ApiError::failure(
+                404,
+                "loaded_mascot_not_found",
+                "No such loaded mascot",
+            ));
+        };
+        let info = self.loaded.remove(index);
+        if let Some(installer) = &self.installer {
+            let path = assets::package_path_for_name(installer.storage_path(), &info.name);
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(json!({ "removed": true, "id": info.id }))
     }
 }
 

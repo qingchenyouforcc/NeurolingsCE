@@ -70,6 +70,15 @@ pub trait ArchiveReader {
     fn read_entry(&mut self, path: &str) -> Result<Vec<u8>, ArchiveError>;
 }
 
+impl<T: ArchiveReader + ?Sized> ArchiveReader for Box<T> {
+    fn entries(&mut self) -> Result<Vec<ArchiveEntry>, ArchiveError> {
+        (**self).entries()
+    }
+    fn read_entry(&mut self, path: &str) -> Result<Vec<u8>, ArchiveError> {
+        (**self).read_entry(path)
+    }
+}
+
 /// 基于纯 Rust `zip` 后端的 mascot 归档读取器。
 pub struct ZipArchiveReader<R> {
     archive: zip::ZipArchive<R>,
