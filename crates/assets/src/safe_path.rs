@@ -60,7 +60,7 @@ pub fn safe_child_path(root: impl AsRef<Path>, name: &str) -> Result<PathBuf, Sa
         return Ok(root.join(normalized));
     }
 
-    if root.is_absolute() == false
+    if !root.is_absolute()
         && root
             .components()
             .any(|component| matches!(component, Component::Prefix(_)))
